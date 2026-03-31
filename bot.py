@@ -23,7 +23,7 @@ ADMIN_ID = int(os.getenv("ADMIN_ID"))
 logging.basicConfig(level=logging.INFO)
 
 # Инициализация бота и диспетчера
-bot = Bot(token=BOTOKEN)
+bot = Bot(token=BOT_TOKEN)  # ✅ ПОПРАВИЛ ЗДЕСЬ!
 dp = Dispatcher()
 
 # Машина состояний
@@ -222,7 +222,6 @@ async def show_updated_list(message, user_id):
     total_products = len(products)
     
     if total_products <= MAX_PRODUCTS_DISPLAY:
-        await send_full_list(types.Message(chat=message.chat, date=message.date, id=message.id))
         await message.edit_text(
             f"📋 **Актуальный список ({len(products)} шт.):**\n\n"
             + "\n".join(f"{'⚠️' if q < 3 else '✅'} `{n}`: {q} шт." for n, q in products),
