@@ -23,7 +23,7 @@ ADMIN_ID = int(os.getenv("ADMIN_ID"))
 logging.basicConfig(level=logging.INFO)
 
 # Инициализация бота и диспетчера
-bot = Bot(token=BOT_TOKEN)  # ✅ ПОПРАВИЛ ЗДЕСЬ!
+bot = Bot(token=BOT_TOKEN)  # ✅ ПОПРАВИЛ ОШИБКУ
 dp = Dispatcher()
 
 # Машина состояний
@@ -31,8 +31,9 @@ class AddProduct(StatesGroup):
     name = State()
     quantity = State()
 
-# Максимум продуктов для отображения за раз
-MAX_PRODUCTS_DISPLAY = 15
+# Пагинация — показываем максимум 15 продуктов за раз
+PRODUCTS_PER_PAGE = 15
+user_state = {}  # Сохраняем список для каждого пользователя
 
 # === ГЛАВНАЯ КОМАНДА ===
 @dp.message(Command("start"))
@@ -48,40 +49,22 @@ async def cmd_start(message: types.Message):
 @dp.message(Command("list"))
 @dp.message(F.text == "📦 Список продуктов")
 async def show_list(message: types.Message):
+    global user_state
+    
     products = await database.get_all_products()
     
     if not products:
         await message.answer("Холодильник пуст! Добавьте что-нибудь.")
         return
     
-    total_products = len(products)
+    # Сохраняем состояние пользователя
+    user_id = message.from_user.id
+    user_state[user_id] = {'products': products}
     
-    # Если продуктов мало — показываем ВСЕ
-    if total_products <= MAX_PRODUCTS_DISPLAY:
-        await send_full_list(message)
-    else:
-        # Если много — разбиваем на страницы
-        await show_page(message.from_user.id, page=1, original_message=message)
+    # Показываем первую страницу
+    await show_page(user_id, page=1, original_message=message)
 
-# Отправка полного списка (без пагинации)
-async def send_full_list(message: types.Message):
-    products = await database.get_all_products()
-    
-    text = f"📋 **Актуальный список ({len(products)} шт.):**\n\n"
-    for name, qty in products:
-        icon = "⚠️" if qty < 3 else "✅"
-        text += f"{icon} `{name}`: {qty} шт.\n"
-    
-    await message.answer(
-        text, 
-        parse_mode="Markdown",
-        reply_markup=keyboards.get_product_list_keyboard(products)
-    )
-
-# Вспомогательная функция для показа страницы (если продуктов много)
-PAGE_SIZE = 15
-user_state = {}
-
+# Вспомогательная функция для показа страницы
 async def show_page(user_id, page=None, original_message=None):
     global user_state
     
@@ -93,15 +76,15 @@ async def show_page(user_id, page=None, original_message=None):
     products = data['products']
     
     current_page = page if page is not None else 1
-    total_pages = (len(products) + PAGE_SIZE - 1) // PAGE_SIZE
+    total_pages = (len(products) + PRODUCTS_PER_PAGE - 1) // PRODUCTS_PER_PAGE
     
     if current_page < 1:
         current_page = 1
     elif current_page > total_pages:
         current_page = total_pages
     
-    start = (current_page - 1) * PAGE_SIZE
-    end = min(start + PAGE_SIZE, len(products))
+    start = (current_page - 1) * PRODUCTS_PER_PAGE
+    end = min(start + PRODUCTS_PER_PAGE, len(products))
     page_products = products[start:end]
     
     text = f"📋 **Список ({current_page}/${total_pages}):**\n\n"
@@ -125,11 +108,12 @@ async def show_page(user_id, page=None, original_message=None):
     reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
     
     try:
-        await original_message.edit_text(
-            text, 
-            parse_mode="Markdown",
-            reply_markup=reply_markup
-        )
+        if original_message:
+            await original_message.edit_text(
+                text, 
+                parse_mode="Markdown",
+                reply_markup=reply_markup
+            )
     except Exception as e:
         print(f"Ошибка редактирования: {e}")
 
@@ -219,19 +203,16 @@ async def refresh_list(callback: types.CallbackQuery):
 # Показ обновлённого списка
 async def show_updated_list(message, user_id):
     products = await database.get_all_products()
-    total_products = len(products)
     
-    if total_products <= MAX_PRODUCTS_DISPLAY:
-        await message.edit_text(
-            f"📋 **Актуальный список ({len(products)} шт.):**\n\n"
-            + "\n".join(f"{'⚠️' if q < 3 else '✅'} `{n}`: {q} шт." for n, q in products),
-            parse_mode="Markdown",
-            reply_markup=keyboards.get_product_list_keyboard(products)
-        )
-    else:
-        await show_page(user_id, None, original_message=message)
+    if not products:
+        await message.answer("Холодильник пуст!")
+        return
+    
+    # Всегда используем пагинацию — это надёжнее!
+    user_state[user_id] = {'products': products}
+    await show_page(user_id, page=1, original_message=message)
 
-# === HEALTH CHECK ДЛЯ RAILWAY/RENDER ===
+# === HEALTH CHECK ===
 async def health_handler(request):
     return web.Response(text="OK")
 
