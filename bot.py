@@ -5,7 +5,7 @@ from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, InputMediaPhoto
 from dotenv import load_dotenv
 from aiohttp import web
 from urllib.parse import quote, unquote
@@ -19,21 +19,20 @@ load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 
+if not BOT_TOKEN:
+    raise ValueError("BOT_TOKEN не найден в файле .env!")
+
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
 
 # Инициализация бота и диспетчера
-bot = Bot(token=BOT_TOKEN)  # ✅ ПОПРАВИЛ ОШИБКУ
+bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 # Машина состояний
 class AddProduct(StatesGroup):
     name = State()
     quantity = State()
-
-# Пагинация — показываем максимум 15 продуктов за раз
-PRODUCTS_PER_PAGE = 15
-user_state = {}  # Сохраняем список для каждого пользователя
 
 # === ГЛАВНАЯ КОМАНДА ===
 @dp.message(Command("start"))
@@ -45,77 +44,45 @@ async def cmd_start(message: types.Message):
         reply_markup=keyboards.get_main_menu()
     )
 
-# Показать список
+# Показать список (без пагинации!)
 @dp.message(Command("list"))
 @dp.message(F.text == "📦 Список продуктов")
 async def show_list(message: types.Message):
-    global user_state
-    
     products = await database.get_all_products()
     
     if not products:
         await message.answer("Холодильник пуст! Добавьте что-нибудь.")
         return
     
-    # Сохраняем состояние пользователя
-    user_id = message.from_user.id
-    user_state[user_id] = {'products': products}
-    
-    # Показываем первую страницу
-    await show_page(user_id, page=1, original_message=message)
+    # Разбиваем на несколько сообщений, если продуктов много (>20)
+    CHUNK_SIZE = 20
+    if len(products) <= CHUNK_SIZE:
+        await send_list_in_one_message(message, products)
+    else:
+        chunks = [products[i:i+CHUNK_SIZE] for i in range(0, len(products), CHUNK_SIZE)]
+        for i, chunk in enumerate(chunks):
+            await send_list_in_one_message(message, chunk, current=i+1, total=len(chunks))
+            await asyncio.sleep(0.5)  # Пауза между сообщениями
 
-# Вспомогательная функция для показа страницы
-async def show_page(user_id, page=None, original_message=None):
-    global user_state
+# Отправка списка продуктов
+async def send_list_in_one_message(message, products, current=None, total=None):
+    status_prefix = ""
+    if current and total:
+        status_prefix = f"({current}/${total}) "
     
-    if user_id not in user_state:
-        products = await database.get_all_products()
-        user_state[user_id] = {'products': products}
-    
-    data = user_state[user_id]
-    products = data['products']
-    
-    current_page = page if page is not None else 1
-    total_pages = (len(products) + PRODUCTS_PER_PAGE - 1) // PRODUCTS_PER_PAGE
-    
-    if current_page < 1:
-        current_page = 1
-    elif current_page > total_pages:
-        current_page = total_pages
-    
-    start = (current_page - 1) * PRODUCTS_PER_PAGE
-    end = min(start + PRODUCTS_PER_PAGE, len(products))
-    page_products = products[start:end]
-    
-    text = f"📋 **Список ({current_page}/${total_pages}):**\n\n"
-    for i, (name, qty) in enumerate(page_products):
+    text = f"📋 **Список продуктов {status_prefix}**:\n\n"
+    for name, qty in products:
         icon = "⚠️" if qty < 3 else "✅"
         text += f"{icon} `{name}`: {qty} шт.\n"
     
-    text += "\n💡 Используй кнопки ниже ⬅️➡️"
+    # Добавляем кнопку обновить в конце каждого сообщения
+    keyboard = [[InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh_list")]]
     
-    keyboard = []
-    if total_pages > 1:
-        row = []
-        if current_page > 1:
-            row.append(InlineKeyboardButton(text="◀️ Назад", callback_data=f"prev_{current_page-1}_{user_id}"))
-        if current_page < total_pages:
-            row.append(InlineKeyboardButton(text="Вперёд ▶️", callback_data=f"next_{current_page+1}_{user_id}"))
-        keyboard.append(row)
-    
-    keyboard.append([InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh_list")])
-    
-    reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
-    
-    try:
-        if original_message:
-            await original_message.edit_text(
-                text, 
-                parse_mode="Markdown",
-                reply_markup=reply_markup
-            )
-    except Exception as e:
-        print(f"Ошибка редактирования: {e}")
+    await message.answer(
+        text, 
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard)
+    )
 
 # Добавить продукт
 @dp.message(Command("add"))
@@ -151,7 +118,7 @@ async def increase_qty(callback: types.CallbackQuery):
         name = unquote(callback.data.split("_", 1)[1])
         new_qty = await database.change_quantity(name, 1)
         await callback.answer(f"{name}: {new_qty}")
-        await show_updated_list(callback.message, callback.from_user.id)
+        await refresh_callback(callback)
     except Exception as e:
         await callback.answer(f"Ошибка: {e}")
         logging.error(f"Increase error: {e}")
@@ -162,7 +129,7 @@ async def decrease_qty(callback: types.CallbackQuery):
         name = unquote(callback.data.split("_", 1)[1])
         new_qty = await database.change_quantity(name, -1)
         await callback.answer(f"{name}: {new_qty}")
-        await show_updated_list(callback.message, callback.from_user.id)
+        await refresh_callback(callback)
     except Exception as e:
         await callback.answer(f"Ошибка: {e}")
         logging.error(f"Decrease error: {e}")
@@ -173,44 +140,54 @@ async def delete_item(callback: types.CallbackQuery):
         name = unquote(callback.data.split("_", 1)[1])
         await database.delete_product(name)
         await callback.answer(f"{name} удален")
-        await show_updated_list(callback.message, callback.from_user.id)
+        await refresh_callback(callback)
     except Exception as e:
         await callback.answer(f"Ошибка: {e}")
         logging.error(f"Delete error: {e}")
 
-# Навигация по страницам
-@dp.callback_query(F.data.startswith("prev_"))
-async def prev_page(callback: types.CallbackQuery):
-    parts = callback.data.split("_")
-    page = int(parts[1])
-    user_id = int(parts[2])
-    await callback.answer()
-    await show_page(user_id, page, original_message=callback.message)
-
-@dp.callback_query(F.data.startswith("next_"))
-async def next_page(callback: types.CallbackQuery):
-    parts = callback.data.split("_")
-    page = int(parts[1])
-    user_id = int(parts[2])
-    await callback.answer()
-    await show_page(user_id, page, original_message=callback.message)
-
 @dp.callback_query(F.data == "refresh_list")
 async def refresh_list(callback: types.CallbackQuery):
     await callback.answer()
-    await show_updated_list(callback.message, callback.from_user.id)
+    await refresh_callback(callback)
 
-# Показ обновлённого списка
-async def show_updated_list(message, user_id):
+# Обновление списка по кнопке
+async def refresh_callback(callback):
     products = await database.get_all_products()
     
     if not products:
-        await message.answer("Холодильник пуст!")
+        await callback.message.edit_text("Холодильник пуст!")
         return
     
-    # Всегда используем пагинацию — это надёжнее!
-    user_state[user_id] = {'products': products}
-    await show_page(user_id, page=1, original_message=message)
+    # Разбиваем на чанки для удобного отображения
+    CHUNK_SIZE = 20
+    if len(products) <= CHUNK_SIZE:
+        text = f"📋 **Актуальный список:**\n\n"
+        for name, qty in products:
+            icon = "⚠️" if qty < 3 else "✅"
+            text += f"{icon} `{name}`: {qty} шт.\n"
+        
+        keyboard = [[InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh_list")]]
+        
+        await callback.message.edit_text(
+            text, 
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard)
+        )
+    else:
+        chunks = [products[i:i+CHUNK_SIZE] for i in range(0, len(products), CHUNK_SIZE)]
+        text = f"📋 **Список (страница 1/${len(chunks)}):**\n\n"
+        for name, qty in chunks[0]:
+            icon = "⚠️" if qty < 3 else "✅"
+            text += f"{icon} `{name}`: {qty} шт.\n"
+        text += "\n💡 Используй /list чтобы увидеть весь список"
+        
+        keyboard = [[InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh_list")]]
+        
+        await callback.message.edit_text(
+            text, 
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard)
+        )
 
 # === HEALTH CHECK ===
 async def health_handler(request):
