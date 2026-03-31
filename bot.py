@@ -19,11 +19,14 @@ load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 
+if not BOT_TOKEN:
+    raise ValueError("BOT_TOKEN не найден в файле .env!")
+
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
 
 # Инициализация бота и диспетчера
-bot = Bot(token=BOTOKEN)
+bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 # Машина состояний
@@ -33,9 +36,9 @@ class AddProduct(StatesGroup):
 
 # Пагинация
 PRODUCTS_PER_PAGE = 10
-user_state = {}  # {user_id: {'page': 1, 'products': []}}
+user_state = {}
 
-# Команда /start
+# === ГЛАВНАЯ КОМАНДА ===
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     await message.answer(
@@ -109,7 +112,6 @@ async def show_page(user_id, page=None, original_message=None):
     
     reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
     
-    # Редактируем сообщение
     try:
         if original_message:
             await original_message.edit_text(
@@ -118,7 +120,7 @@ async def show_page(user_id, page=None, original_message=None):
                 reply_markup=reply_markup
             )
         else:
-            await dp.storage.set(key="last_message_id", value=user_id)
+            await dp.storage.set(key="last_message_id", value=str(original_message.chat.id))
             last_msg_id = await dp.storage.get(key="last_message_id")
             await bot.edit_message_text(
                 chat_id=int(last_msg_id or 0),
@@ -127,10 +129,8 @@ async def show_page(user_id, page=None, original_message=None):
                 reply_markup=reply_markup,
                 parse_mode="Markdown"
             )
-    except:
-        pass
-    finally:
-        await callback.answer()
+    except Exception as e:
+        print(f"Ошибка при редактировании сообщения: {e}")
 
 # Добавить продукт
 @dp.message(Command("add"))
@@ -160,7 +160,6 @@ async def process_quantity(message: types.Message, state: FSMContext):
     await state.clear()
 
 # === ОБРАБОТКА КНОПОК ===
-
 @dp.callback_query(F.data.startswith("inc_"))
 async def increase_qty(callback: types.CallbackQuery):
     try:
@@ -216,8 +215,7 @@ async def refresh_list(callback: types.CallbackQuery):
     await callback.answer()
     await show_page(callback.from_user.id, None, original_message=callback.message)
 
-# === HEALTH CHECK ДЛЯ RENDER/RAILWAY ===
-
+# === HEALTH CHECK ДЛЯ RAILWAY/RENDER ===
 async def health_handler(request):
     return web.Response(text="OK")
 
@@ -231,7 +229,6 @@ async def start_health_server():
     print("✅ Health server started on port 8080")
 
 # === ЗАПУСК ===
-
 async def main():
     await database.init_db()
     print("🤖 Бот запущен...")
