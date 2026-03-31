@@ -1,5 +1,5 @@
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, KeyboardButton, ReplyKeyboardMarkup
-from urllib.parse import quote  # Важно! Это нужно для кодирования названий
+from urllib.parse import quote
 
 def get_main_menu():
     """Главное меню внизу экрана"""
