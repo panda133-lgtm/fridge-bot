@@ -1,60 +1,61 @@
+import sqlite3
+import os
 import aiosqlite
 
-DB_NAME = 'fridge.db'
-
+DATABASE_NAME = "./fridge.db"
 
 async def init_db():
-    """Создает таблицу при первом запуске"""
-    async with aiosqlite.connect(DB_NAME) as db:
-        await db.execute('''
-            CREATE TABLE IF NOT EXISTS products (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT UNIQUE NOT NULL,
-                quantity INTEGER DEFAULT 0
-            )
-        ''')
-        await db.commit()
-
+    conn = await aiosqlite.connect(DATABASE_NAME)
+    cursor = await conn.cursor()
+    await cursor.execute('''
+        CREATE TABLE IF NOT EXISTS products (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT UNIQUE NOT NULL,
+            quantity REAL NOT NULL,
+            unit TEXT NOT NULL DEFAULT "штука"
+        )
+    ''')
+    await conn.commit()
+    await conn.close()
 
 async def get_all_products():
-    """Возвращает список всех продуктов"""
-    async with aiosqlite.connect(DB_NAME) as db:
-        async with db.execute('SELECT name, quantity FROM products ORDER BY quantity ASC') as cursor:
-            return await cursor.fetchall()
+    conn = await aiosqlite.connect(DATABASE_NAME)
+    cursor = await conn.cursor()
+    await cursor.execute('SELECT name, quantity, unit FROM products ORDER BY quantity ASC')
+    products = await cursor.fetchall()
+    await conn.close()
+    return products
 
+async def add_or_update_product(name, quantity, unit="штука"):
+    conn = await aiosqlite.connect(DATABASE_NAME)
+    cursor = await conn.cursor()
+    await cursor.execute('''
+        INSERT INTO products (name, quantity, unit)
+        VALUES (?, ?, ?)
+        ON CONFLICT(name) DO UPDATE SET quantity = excluded.quantity, unit = excluded.unit
+    ''', (name, quantity, unit))
+    await conn.commit()
+    await conn.close()
 
-async def add_or_update_product(name: str, quantity: int):
-    """Добавляет новый продукт или обновляет количество"""
-    async with aiosqlite.connect(DB_NAME) as db:
-        cursor = await db.execute('SELECT quantity FROM products WHERE name = ?', (name,))
-        exists = await cursor.fetchone()
+async def change_quantity(name, amount):
+    conn = await aiosqlite.connect(DATABASE_NAME)
+    cursor = await conn.cursor()
+    await cursor.execute('SELECT quantity, unit FROM products WHERE name = ?', (name,))
+    result = await cursor.fetchone()
+    
+    if result:
+        old_qty, unit = result
+        new_qty = max(0, old_qty + amount)
+        await cursor.execute('UPDATE products SET quantity = ? WHERE name = ?', (new_qty, name))
+        await conn.commit()
+        await conn.close()
+        return new_qty
+    await conn.close()
+    return 0
 
-        if exists:
-            await db.execute('UPDATE products SET quantity = ? WHERE name = ?', (quantity, name))
-        else:
-            await db.execute('INSERT INTO products (name, quantity) VALUES (?, ?)', (name, quantity))
-        await db.commit()
-
-
-async def change_quantity(name: str, delta: int):
-    """Изменяет количество на указанное число (+1 или -1)"""
-    async with aiosqlite.connect(DB_NAME) as db:
-        cursor = await db.execute('SELECT quantity FROM products WHERE name = ?', (name,))
-        result = await cursor.fetchone()
-
-        if result:
-            new_qty = result[0] + delta
-            if new_qty < 0:
-                new_qty = 0
-
-            await db.execute('UPDATE products SET quantity = ? WHERE name = ?', (new_qty, name))
-            await db.commit()
-            return new_qty
-    return None
-
-
-async def delete_product(name: str):
-    """Удаляет продукт из списка"""
-    async with aiosqlite.connect(DB_NAME) as db:
-        await db.execute('DELETE FROM products WHERE name = ?', (name,))
-        await db.commit()
+async def delete_product(name):
+    conn = await aiosqlite.connect(DATABASE_NAME)
+    cursor = await conn.cursor()
+    await cursor.execute('DELETE FROM products WHERE name = ?', (name,))
+    await conn.commit()
+    await conn.close()
