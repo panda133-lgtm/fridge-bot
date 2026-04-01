@@ -10,17 +10,11 @@ def get_main_menu():
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
 def get_product_list_keyboard(products):
-    """
-    Генерирует кнопки для каждого продукта в списке.
-    Для каждого продукта: [ -1 ] [ Название (кол-во) ] [ +1 ] [ Удалить ]
-    """
+    """Генерирует кнопки для каждого продукта в списке."""
     keyboard = []
     
     for name, qty in products:
-        # Определяем статус (мало или нормально)
-        status = "⚠️" if qty < 3 else "✅"
-        
-        # Кодируем название для callback_data (чтобы пробелы и символы не ломали)
+        status = "⚠️" if qty <= 3 else "✅"
         encoded_name = quote(name)
         
         row = [
@@ -31,7 +25,6 @@ def get_product_list_keyboard(products):
         ]
         keyboard.append(row)
     
-    # Кнопка обновления списка
     keyboard.append([InlineKeyboardButton(text="🔄 Обновить список", callback_data="refresh_list")])
     
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
