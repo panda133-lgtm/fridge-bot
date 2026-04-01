@@ -15,7 +15,7 @@ def get_product_keyboard(products):
             InlineKeyboardButton(text="➕", callback_data=f"inc_{safe}"),
             InlineKeyboardButton(text="🗑", callback_data=f"del_{safe}")
         ])
-    kb.append([InlineKeyboardButton(text="🔄", callback_data="refresh")])
-    kb.append([InlineKeyboardButton(text="📉 Мало", callback_data="low")])
+    kb.append([InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh")])
+    kb.append([InlineKeyboardButton(text="📉 Мало (<3)", callback_data="low")])
     kb.append([InlineKeyboardButton(text="➕ Новый", callback_data="add")])
     return InlineKeyboardMarkup(inline_keyboard=kb)
