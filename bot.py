@@ -34,19 +34,22 @@ class AddProduct(StatesGroup):
 CHUNK_SIZE = 20
 last_notification_check_day = None
 
+# Функция для создания главного меню (убрали зависимости от keyboards.py)
+def create_main_menu():
+    kb = [
+        [KeyboardButton(text="📦 Список продуктов"), KeyboardButton(text="➕ Добавить продукт")]
+    ]
+    return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
+
 # === ГЛАВНОЕ МЕНЮ ===
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
-    kb = ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton(text="📦 Список продуктов"), KeyboardButton(text="➕ Добавить продукт")]
-    ], resize_keyboard=True)
     await message.answer(
         "Привет! Я ваш Умный Холодильник 🧊\n\n"
         "Что хотите сделать?",
-        reply_markup=kb
+        reply_markup=create_main_menu()
     )
 
-# === СПИСОК ПРОДУКТОВ ===
 @dp.message(Command("list"))
 @dp.message(F.text == "📦 Список продуктов")
 async def show_list(message: types.Message):
@@ -97,11 +100,21 @@ async def start_add(callback: types.CallbackQuery, state: FSMContext):
 @dp.message(AddProduct.name)
 async def process_name(message: types.Message, state: FSMContext):
     if not message.text.strip():
-        await message.answer("⚠️ Введите название продукта:", reply_markup=keyboards.get_main_menu())
+        # Исправлено: создаём клавиатуру напрямую без импорта
+        main_kb = ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text="📦 Список продуктов"), KeyboardButton(text="➕ Добавить продукт")]], 
+            resize_keyboard=True
+        )
+        await message.answer("⚠️ Введите название продукта:", reply_markup=main_kb)
         return
         
     await state.update_data(name=message.text.strip())
-    await message.answer("Теперь напишите количество (числом, можно с запятой):", reply_markup=keyboards.get_main_menu())
+    # Исправлено: тоже здесь
+    main_kb = ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="📦 Список продуктов"), KeyboardButton(text="➕ Добавить продукт")]], 
+        resize_keyboard=True
+    )
+    await message.answer("Теперь напишите количество (числом, можно с запятой):", reply_markup=main_kb)
     await state.set_state(AddProduct.quantity)
 
 @dp.message(AddProduct.quantity)
@@ -122,7 +135,11 @@ async def process_quantity(message: types.Message, state: FSMContext):
         await state.set_state(AddProduct.unit)
         
     except ValueError:
-        await message.answer("❌ Пожалуйста, введите корректное число!", reply_markup=keyboards.get_main_menu())
+        main_kb = ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text="📦 Список продуктов"), KeyboardButton(text="➕ Добавить продукт")]], 
+            resize_keyboard=True
+        )
+        await message.answer("❌ Пожалуйста, введите корректное число!", reply_markup=main_kb)
 
 @dp.callback_query(F.data.startswith("u_"))
 async def process_unit(callback: types.CallbackQuery, state: FSMContext):
@@ -177,7 +194,7 @@ async def show_low_quantity_list(user_id):
     low_products = [(name, qty, unit) for name, qty, unit in products if float(qty) <= 1]
     
     if not low_products:
-        kb = [[InlineKeyboardButton(text="🔙 Назад к списку", callback_data="r")]]
+        kb = [[InlineKeyboardButton(text="🔙 Назад к списку", callback_data="refresh")]]
         await bot.send_message(chat_id=user_id, text="✅ Все продукты в нормальном количестве!", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
         return
     
@@ -197,7 +214,7 @@ async def show_low_quantity_list(user_id):
         ]
         keyboard.append(row)
     
-    keyboard.append([InlineKeyboardButton(text="🔙 Назад к списку", callback_data="r")])
+    keyboard.append([InlineKeyboardButton(text="🔙 Назад к списку", callback_data="refresh")])
     keyboard.append([InlineKeyboardButton(text="➕ Добавить продукт", callback_data="add_product")])
     
     await bot.send_message(chat_id=user_id, text=text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard))
@@ -230,7 +247,7 @@ async def refresh_last_message(user_id):
             ]
             keyboard.append(row)
         
-        keyboard.append([InlineKeyboardButton(text="🔄 Обновить список", callback_data="r")])
+        keyboard.append([InlineKeyboardButton(text="🔄 Обновить список", callback_data="refresh")])
         keyboard.append([InlineKeyboardButton(text="📉 Мало продуктов", callback_data="l")])
         keyboard.append([InlineKeyboardButton(text="➕ Добавить продукт", callback_data="add_product")])
         
