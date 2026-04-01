@@ -39,7 +39,7 @@ def get_main_kb():
     ], resize_keyboard=True)
 
 async def send_chunk(message, products):
-    text = f"📋 **Список:**\n\n"
+    text = f"📋 **Актуальный список:**\n\n"
     for name, qty, unit in products:
         icon = "⚠️" if float(qty) <= 1 else "✅"
         text += f"{icon} `{name}`: {qty} {unit}\n"
@@ -51,14 +51,14 @@ async def send_chunk(message, products):
             InlineKeyboardButton(text="➖", callback_data=f"dec_{encoded}"),
             InlineKeyboardButton(text=name, callback_data="info"),
             InlineKeyboardButton(text="➕", callback_data=f"inc_{encoded}"),
-            InlineKeyboardButton(text="🗑", callback_data=f"del_{encoded}")
+            InlineKeyboardButton(text="🗑 Удалить", callback_data=f"del_{encoded}")
         ]
         kb.append(row)
     
     kb.extend([
-        [InlineKeyboardButton(text="🔄 Обновить список", callback_data="refresh")],
-        [InlineKeyboardButton(text="📉 Показать мало продуктов", callback_data="low_q")],
-        [InlineKeyboardButton(text="➕ Добавить продукт", callback_data="add_new")]
+        [InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh")],
+        [InlineKeyboardButton(text="📉 Мало продуктов (≤1)", callback_data="low_q")],
+        [InlineKeyboardButton(text="➕ Добавить новый", callback_data="add_new")]
     ])
     
     markup = InlineKeyboardMarkup(inline_keyboard=kb)
@@ -74,7 +74,7 @@ async def show_list(message: types.Message):
     products = await database.get_all_products()
     if not products:
         markup = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="➕ Добавить продукт", callback_data="add_new")]])
-        await message.answer("❌ Холодильник пуст!", reply_markup=markup)
+        await message.answer("❌ Холодильник пуст!\n\nВам нужно добавить продукты.", reply_markup=markup)
         return
     
     chunks = [products[i:i+CHUNK_SIZE] for i in range(0, len(products), CHUNK_SIZE)]
@@ -86,7 +86,7 @@ async def show_list(message: types.Message):
 @dp.callback_query(F.data == "add_new")
 async def add_product(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer("")
-    msg = await callback.message.reply("Напишите название продукта:", reply_markup=get_main_kb())
+    msg = await callback.message.reply("Напишите название продукта (например: Молоко):", reply_markup=get_main_kb())
     await state.set_state(AddProduct.name)
 
 @dp.message(AddProduct.name)
@@ -96,7 +96,7 @@ async def process_name(message: types.Message, state: FSMContext):
         await message.answer("⚠️ Пожалуйста, введите название!", reply_markup=main_kb)
         return
     await state.update_data(name=message.text.strip())
-    await message.answer("Введите количество (числом):", reply_markup=main_kb)
+    await message.answer("Теперь введите количество (числом, например: 2.5):", reply_markup=main_kb)
     await state.set_state(AddProduct.quantity)
 
 @dp.message(AddProduct.quantity)
@@ -106,10 +106,10 @@ async def process_quantity(message: types.Message, state: FSMContext):
         await state.update_data(quantity=val)
         
         units_kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🍏 Штука", callback_data="u_pie")],
-            [InlineKeyboardButton(text="🥛 Пол-литра", callback_data="u_hal")],
-            [InlineKeyboardButton(text="🧱 Пачка", callback_data="u_pack")],
-            [InlineKeyboardButton(text="🍶 Бутылка", callback_data="u_bot")],
+            [InlineKeyboardButton(text="🍏 Штука/шт", callback_data="u_pie")],
+            [InlineKeyboardButton(text="🥛 Литр/л", callback_data="u_liter")],
+            [InlineKeyboardButton(text="🧱 Пачка/шт", callback_data="u_pack")],
+            [InlineKeyboardButton(text="🍶 Бутылка/шт", callback_data="u_bot")],
             [InlineKeyboardButton(text="🥗 Тарелка/блюдо", callback_data="u_plt")]
         ])
         await message.answer("Выберите единицу измерения:", reply_markup=units_kb)
@@ -119,7 +119,7 @@ async def process_quantity(message: types.Message, state: FSMContext):
 
 @dp.callback_query(F.data.startswith("u_"))
 async def process_unit(callback: types.CallbackQuery, state: FSMContext):
-    map_unit = {"pie": "штука", "hal": "пол-литра", "pack": "пачка", "bot": "бутылка", "plt": "блюдо"}
+    map_unit = {"pie": "штука", "liter": "литр", "pack": "пачка", "bot": "бутылка", "plt": "блюдо"}
     unit = map_unit[callback.data.split("_")[1]]
     data = await state.get_data()
     name = data['name']
@@ -127,7 +127,7 @@ async def process_unit(callback: types.CallbackQuery, state: FSMContext):
     
     await database.add_or_update_product(name, str(qty), unit)
     await callback.message.delete()
-    await bot.send_message(chat_id=callback.from_user.id, text=f"✅ Готово! {name}: {qty} {unit}", parse_mode="Markdown")
+    await bot.send_message(chat_id=callback.from_user.id, text=f"✅ **Готово!** `{name}`: {qty} {unit}", parse_mode="Markdown")
     await state.clear()
 
 @dp.callback_query(F.data.startswith(("dec_", "inc_", "del_", "refresh", "low_q")))
@@ -159,7 +159,7 @@ async def handle_buttons(callback: types.CallbackQuery):
             await show_low(callback.from_user.id)
             
     except Exception as e:
-        await callback.answer("Ошибка", show_alert=True)
+        await callback.answer("Ошибка при обработке", show_alert=True)
 
 @dp.callback_query(F.data == "info")
 async def any_info(callback: types.CallbackQuery):
@@ -170,10 +170,10 @@ async def show_low(user_id):
     low = [(n, q, u) for n, q, u in products if float(q) <= 1]
     
     if not low:
-        await bot.send_message(chat_id=user_id, text="✅ Все продукты в норме!")
+        await bot.send_message(chat_id=user_id, text="✅ Все продукты в норме (≥1 шт.)!")
         return
     
-    text = "📉 Мало осталось:\n\n" + "\n".join(f"⚠️ {n}: {q} {u}" for n, q, _ in low)
+    text = "📉 **Мало осталось (≤1):**\n\n" + "\n".join(f"⚠️ `{n}`: {q} {u}" for n, q, _ in low)
     
     kb = [[InlineKeyboardButton(text=n, callback_data=f"del_{quote(n)}")] for n, q, _ in low]
     kb.append([InlineKeyboardButton(text="🔙 Назад к списку", callback_data="refresh")])
@@ -185,13 +185,13 @@ async def refresh_last(user_id):
     products = await database.get_all_products()
     if not products: return
     first = products[:CHUNK_SIZE]
-    text = f"📋 Актуальный список:\n\n" + "\n".join(f"{'⚠️' if float(q)<=1 else '✅'} {n}: {q} {u}" for n, q, u in first)
+    text = f"📋 **Актуальный список:**\n\n" + "\n".join(f"{'⚠️' if float(q)<=1 else '✅'} `{n}`: {q} {u}" for n, q, u in first)
     
-    kb = [[InlineKeyboardButton(text=f"{n}", callback_data=f"inc_{quote(n)}")] for n, q, _ in first]
+    kb = [[InlineKeyboardButton(text=f"➖ {n} ➕", callback_data=f"inc_{quote(n)}")] for n, q, _ in first]
     kb.extend([
         [InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh")],
         [InlineKeyboardButton(text="📉 Показать мало", callback_data="low_q")],
-        [InlineKeyboardButton(text="➕ Добавить", callback_data="add_new")]
+        [InlineKeyboardButton(text="➕ Добавить новый", callback_data="add_new")]
     ])
     
     markup = InlineKeyboardMarkup(inline_keyboard=kb)
@@ -222,8 +222,8 @@ async def check_notifications():
         low = [(n, q, u) for n, q, u in products if float(q) <= 1]
         if not low: return
         
-        text = f"⚠️ НАПОМИНАНИЕ ⚠️\n\n📉 Осталось мало:\n" + "\n".join(f"• {n}: {q} {u}" for n, q, u in low)
-        text += "\n🛒 Пора купить!"
+        text = f"⚠️ *НАПОМИНАНИЕ* ⚠️\n\n📉 *Осталось мало (≤1):* \n" + "\n".join(f"• `{n}`: {q} {u}" for n, q, u in low)
+        text += "\n\n🛒 Пора купить!"
         await bot.send_message(chat_id=ADMIN_ID, text=text, parse_mode="Markdown")
         logging.info("Уведомление отправлено")
     except Exception as e:
@@ -235,7 +235,7 @@ async def main():
         print("База готова")
     except Exception as e:
         print(f"Ошибка базы: {e}")
-    print("Запущен!")
+    print("🤖 Запущен!")
     asyncio.create_task(notification_worker())
     await dp.start_polling(bot)
 
@@ -243,4 +243,4 @@ if __name__ == '__main__':
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("Выключен")
+        print("Бот выключен")
