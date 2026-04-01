@@ -5,7 +5,7 @@ from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, InputMediaPhoto
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from dotenv import load_dotenv
 from aiohttp import web
 from urllib.parse import quote, unquote
@@ -34,6 +34,9 @@ class AddProduct(StatesGroup):
     name = State()
     quantity = State()
 
+# Размер чанка для разбивки списка
+CHUNK_SIZE = 20
+
 # === ГЛАВНАЯ КОМАНДА ===
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
@@ -48,34 +51,32 @@ async def cmd_start(message: types.Message):
 @dp.message(Command("list"))
 @dp.message(F.text == "📦 Список продуктов")
 async def show_list(message: types.Message):
+    global CHUNK_SIZE
+    
     products = await database.get_all_products()
     
     if not products:
         await message.answer("Холодильник пуст! Добавьте что-нибудь.")
         return
     
-    # Разбиваем на несколько сообщений, если продуктов много (>20)
-    CHUNK_SIZE = 20
-    if len(products) <= CHUNK_SIZE:
-        await send_list_in_one_message(message, products)
-    else:
-        chunks = [products[i:i+CHUNK_SIZE] for i in range(0, len(products), CHUNK_SIZE)]
-        for i, chunk in enumerate(chunks):
-            await send_list_in_one_message(message, chunk, current=i+1, total=len(chunks))
-            await asyncio.sleep(0.5)  # Пауза между сообщениями
+    # Разбиваем на несколько сообщений, если продуктов много (>CHUNK_SIZE)
+    chunks = [products[i:i+CHUNK_SIZE] for i in range(0, len(products), CHUNK_SIZE)]
+    
+    for i, chunk in enumerate(chunks):
+        await send_list_chunk(message, chunk, current=i+1, total=len(chunks))
+        await asyncio.sleep(0.5)  # Пауза между сообщениями
 
-# Отправка списка продуктов
-async def send_list_in_one_message(message, products, current=None, total=None):
+# Отправка одного куска списка
+async def send_list_chunk(message, products, current=None, total=None):
     status_prefix = ""
     if current and total:
-        status_prefix = f"({current}/${total}) "
+        status_prefix = f"[{current}/${total}] "
     
     text = f"📋 **Список продуктов {status_prefix}**:\n\n"
     for name, qty in products:
-        icon = "⚠️" if qty < 3 else "✅"
+        icon = "⚠️" if qty <= 3 else "✅"  # ✅ Изменил с < 3 на <= 3
         text += f"{icon} `{name}`: {qty} шт.\n"
     
-    # Добавляем кнопку обновить в конце каждого сообщения
     keyboard = [[InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh_list")]]
     
     await message.answer(
@@ -115,10 +116,13 @@ async def process_quantity(message: types.Message, state: FSMContext):
 @dp.callback_query(F.data.startswith("inc_"))
 async def increase_qty(callback: types.CallbackQuery):
     try:
+        # Декодируем название продукта
         name = unquote(callback.data.split("_", 1)[1])
         new_qty = await database.change_quantity(name, 1)
-        await callback.answer(f"{name}: {new_qty}")
-        await refresh_callback(callback)
+        await callback.answer(f"✓ {name}: {new_qty}")
+        
+        # Обновляем последнее сообщение
+        await refresh_last_message(callback.from_user.id)
     except Exception as e:
         await callback.answer(f"Ошибка: {e}")
         logging.error(f"Increase error: {e}")
@@ -126,10 +130,13 @@ async def increase_qty(callback: types.CallbackQuery):
 @dp.callback_query(F.data.startswith("dec_"))
 async def decrease_qty(callback: types.CallbackQuery):
     try:
+        # Декодируем название продукта
         name = unquote(callback.data.split("_", 1)[1])
         new_qty = await database.change_quantity(name, -1)
-        await callback.answer(f"{name}: {new_qty}")
-        await refresh_callback(callback)
+        await callback.answer(f"✓ {name}: {new_qty}")
+        
+        # Обновляем последнее сообщение
+        await refresh_last_message(callback.from_user.id)
     except Exception as e:
         await callback.answer(f"Ошибка: {e}")
         logging.error(f"Decrease error: {e}")
@@ -137,57 +144,107 @@ async def decrease_qty(callback: types.CallbackQuery):
 @dp.callback_query(F.data.startswith("del_"))
 async def delete_item(callback: types.CallbackQuery):
     try:
+        # Декодируем название продукта
         name = unquote(callback.data.split("_", 1)[1])
         await database.delete_product(name)
-        await callback.answer(f"{name} удален")
-        await refresh_callback(callback)
+        await callback.answer(f"✓ {name} удален")
+        
+        # Обновляем последнее сообщение
+        await refresh_last_message(callback.from_user.id)
     except Exception as e:
         await callback.answer(f"Ошибка: {e}")
         logging.error(f"Delete error: {e}")
 
+# Сохранение ID последнего сообщения от пользователя
+user_last_messages = {}  # {user_id: last_message_id}
+
 @dp.callback_query(F.data == "refresh_list")
 async def refresh_list(callback: types.CallbackQuery):
-    await callback.answer()
-    await refresh_callback(callback)
+    await callback.answer("Обновляю...")
+    await refresh_last_message(callback.from_user.id)
 
-# Обновление списка по кнопке
-async def refresh_callback(callback):
-    products = await database.get_all_products()
-    
-    if not products:
-        await callback.message.edit_text("Холодильник пуст!")
-        return
-    
-    # Разбиваем на чанки для удобного отображения
-    CHUNK_SIZE = 20
-    if len(products) <= CHUNK_SIZE:
-        text = f"📋 **Актуальный список:**\n\n"
-        for name, qty in products:
-            icon = "⚠️" if qty < 3 else "✅"
-            text += f"{icon} `{name}`: {qty} шт.\n"
+# Обновление списка (общая функция)
+async def refresh_last_message(user_id):
+    try:
+        products = await database.get_all_products()
         
-        keyboard = [[InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh_list")]]
+        if not products:
+            user_id_to_use = user_last_messages.get(user_id)
+            if user_id_to_use:
+                try:
+                    await bot.edit_message_text(
+                        chat_id=user_id_to_use["chat_id"],
+                        message_id=user_id_to_use["message_id"],
+                        text="❌ Холодильник пуст! Добавьте продукты.",
+                        parse_mode="Markdown"
+                    )
+                except:
+                    pass
+            return
         
-        await callback.message.edit_text(
-            text, 
-            parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard)
-        )
-    else:
-        chunks = [products[i:i+CHUNK_SIZE] for i in range(0, len(products), CHUNK_SIZE)]
-        text = f"📋 **Список (страница 1/${len(chunks)}):**\n\n"
-        for name, qty in chunks[0]:
-            icon = "⚠️" if qty < 3 else "✅"
-            text += f"{icon} `{name}`: {qty} шт.\n"
-        text += "\n💡 Используй /list чтобы увидеть весь список"
-        
-        keyboard = [[InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh_list")]]
-        
-        await callback.message.edit_text(
-            text, 
-            parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard)
-        )
+        # Если мало продуктов — показываем всё сразу
+        if len(products) <= CHUNK_SIZE:
+            text = f"📋 **Актуальный список:**\n\n"
+            for name, qty in products:
+                icon = "⚠️" if qty <= 3 else "✅"  # ✅ Изменил с < 3 на <= 3
+                text += f"{icon} `{name}`: {qty} шт.\n"
+            
+            keyboard = [[InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh_list")]]
+            
+            try:
+                msg_data = user_last_messages.get(user_id)
+                if msg_data:
+                    await bot.edit_message_text(
+                        chat_id=msg_data["chat_id"],
+                        message_id=msg_data["message_id"],
+                        text=text,
+                        parse_mode="Markdown",
+                        reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard)
+                    )
+                else:
+                    await bot.send_message(
+                        chat_id=user_id,
+                        text=text,
+                        parse_mode="Markdown",
+                        reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard)
+                    )
+            except Exception as e:
+                print(f"Ошибка обновления сообщения: {e}")
+        else:
+            # Если много продуктов — показываем первый чанк
+            chunks = [products[i:i+CHUNK_SIZE] for i in range(0, len(products), CHUNK_SIZE)]
+            first_chunk = chunks[0]
+            
+            text = f"📋 **Список (стр. 1/${len(chunks)}):**\n\n"
+            for name, qty in first_chunk:
+                icon = "⚠️" if qty <= 3 else "✅"  # ✅ Изменил с < 3 на <= 3
+                text += f"{icon} `{name}`: {qty} шт.\n"
+            text += "\n💡 Для полного списка используйте /list"
+            
+            keyboard = [[InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh_list")]]
+            
+            try:
+                msg_data = user_last_messages.get(user_id)
+                if msg_data:
+                    await bot.edit_message_text(
+                        chat_id=msg_data["chat_id"],
+                        message_id=msg_data["message_id"],
+                        text=text,
+                        parse_mode="Markdown",
+                        reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard)
+                    )
+                else:
+                    await bot.send_message(
+                        chat_id=user_id,
+                        text=text,
+                        parse_mode="Markdown",
+                        reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard)
+                    )
+            except Exception as e:
+                print(f"Ошибка обновления сообщения: {e}")
+                
+    except Exception as e:
+        print(f"Ошибка при обновлении: {e}")
 
 # === HEALTH CHECK ===
 async def health_handler(request):
