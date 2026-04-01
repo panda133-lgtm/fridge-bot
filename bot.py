@@ -34,10 +34,9 @@ CHUNK_SIZE = 20
 last_notification_day = None
 
 def get_main_kb():
-    return ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="📦 Список продуктов"), KeyboardButton(text="➕ Добавить продукт")]], 
-        resize_keyboard=True
-    )
+    return ReplyKeyboardMarkup(keyboard=[
+        [KeyboardButton(text="📦 Список продуктов"), KeyboardButton(text="➕ Добавить продукт")]
+    ], resize_keyboard=True)
 
 async def send_chunk(message, products):
     text = f"📋 **Список:**\n\n"
@@ -48,7 +47,9 @@ async def send_chunk(message, products):
     kb = []
     for name, qty, unit in products:
         encoded = quote(name)
-        kb.append([InlineKeyboardButton(text=f"➖ {name} ➕", callback_data=f"d_{encoded}")])
+        kb.append([
+            InlineKeyboardButton(text=f"➖ {name} ➕", callback_data=f"d_{encoded}"),
+        ])
     
     kb.extend([
         [InlineKeyboardButton(text="🔄 Обновить", callback_data="r")],
@@ -56,11 +57,8 @@ async def send_chunk(message, products):
         [InlineKeyboardButton(text="➕ Добавить", callback_data="a")]
     ])
     
-    await message.answer(
-        text, 
-        parse_mode="Markdown", 
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
-    )
+    markup = InlineKeyboardMarkup(inline_keyboard=kb)
+    await message.answer(text, parse_mode="Markdown", reply_markup=markup)
 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
@@ -71,10 +69,10 @@ async def cmd_start(message: types.Message):
 async def show_list(message: types.Message):
     products = await database.get_all_products()
     if not products:
-        await message.answer(
-            "❌ Пуст!", 
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton("➕ Добавить", callback_data="a")]])
-        )
+        markup = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="➕ Добавить", callback_data="a")]
+        ])
+        await message.answer("❌ Пуст!", reply_markup=markup)
         return
     
     chunks = [products[i:i+CHUNK_SIZE] for i in range(0, len(products), CHUNK_SIZE)]
@@ -91,11 +89,12 @@ async def add_product(callback: types.CallbackQuery, state: FSMContext):
 
 @dp.message(AddProduct.name)
 async def process_name(message: types.Message, state: FSMContext):
+    main_kb = get_main_kb()
     if not message.text.strip():
-        await message.answer("⚠️ Введите название!", reply_markup=get_main_kb())
+        await message.answer("⚠️ Введите название!", reply_markup=main_kb)
         return
     await state.update_data(name=message.text.strip())
-    await message.answer("Количество (число):", reply_markup=get_main_kb())
+    await message.answer("Количество (число):", reply_markup=main_kb)
     await state.set_state(AddProduct.quantity)
 
 @dp.message(AddProduct.quantity)
@@ -103,14 +102,15 @@ async def process_quantity(message: types.Message, state: FSMContext):
     try:
         val = float(message.text.replace(',', '.'))
         await state.update_data(quantity=val)
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton("🍏 Штука", callback_data="u_pie")],
-            [InlineKeyboardButton("🥛 Пол-литра", callback_data="u_hal")],
-            [InlineKeyboardButton("🧱 Пачка", callback_data="u_pack")],
-            [InlineKeyboardButton("🍶 Бутылка", callback_data="u_bot")],
-            [InlineKeyboardButton("🥗 Тарелка", callback_data="u_plt")]
+        
+        units_kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🍏 Штука", callback_data="u_pie")],
+            [InlineKeyboardButton(text="🥛 Пол-литра", callback_data="u_hal")],
+            [InlineKeyboardButton(text="🧱 Пачка", callback_data="u_pack")],
+            [InlineKeyboardButton(text="🍶 Бутылка", callback_data="u_bot")],
+            [InlineKeyboardButton(text="🥗 Тарелка", callback_data="u_plt")]
         ])
-        await message.answer("Выберите единицу:", reply_markup=kb)
+        await message.answer("Выберите единицу:", reply_markup=units_kb)
         await state.set_state(AddProduct.unit)
     except ValueError:
         await message.answer("❌ Число!", reply_markup=get_main_kb())
@@ -162,15 +162,11 @@ async def show_low(user_id):
     
     text = "📉 **Мало:**\n\n" + "\n".join(f"⚠️ `{n}`: {q} {u}" for n, q, _ in low)
     
-    kb = [[InlineKeyboardButton(text=f"{n} ({q})", callback_data=f"d_{quote(n)}")] for n, _, _ in low]
-    kb.append([InlineKeyboardButton("🔙 Назад", callback_data="r")])
+    kb = [[InlineKeyboardButton(text=f"{n} ({q})", callback_data=f"d_{quote(n)}")] for n, q, _ in low]
+    kb.append([InlineKeyboardButton(text="🔙 Назад", callback_data="r")])
     
-    await bot.send_message(
-        chat_id=user_id, 
-        text=text, 
-        parse_mode="Markdown", 
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
-    )
+    markup = InlineKeyboardMarkup(inline_keyboard=kb)
+    await bot.send_message(chat_id=user_id, text=text, parse_mode="Markdown", reply_markup=markup)
 
 async def refresh_last(user_id):
     products = await database.get_all_products()
@@ -180,17 +176,13 @@ async def refresh_last(user_id):
     
     kb = [[InlineKeyboardButton(text=f"{n} ({q})", callback_data=f"d_{quote(n)}")] for n, q, _ in first]
     kb.extend([
-        [InlineKeyboardButton("🔄", callback_data="r")],
-        [InlineKeyboardButton("📉", callback_data="l")],
-        [InlineKeyboardButton("➕", callback_data="a")]
+        [InlineKeyboardButton(text="🔄", callback_data="r")],
+        [InlineKeyboardButton(text="📉", callback_data="l")],
+        [InlineKeyboardButton(text="➕", callback_data="a")]
     ])
     
-    await bot.send_message(
-        chat_id=user_id, 
-        text=text, 
-        parse_mode="Markdown", 
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
-    )
+    markup = InlineKeyboardMarkup(inline_keyboard=kb)
+    await bot.send_message(chat_id=user_id, text=text, parse_mode="Markdown", reply_markup=markup)
 
 async def notification_worker():
     global last_notification_day
