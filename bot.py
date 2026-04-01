@@ -1,12 +1,10 @@
-import asyncio, logging, os, re
-from datetime import datetime
+import asyncio, logging, os
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 from dotenv import load_dotenv
-from aiohttp import web
 from urllib.parse import quote, unquote
 
 import database, keyboards
@@ -14,9 +12,6 @@ import database, keyboards
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
-
-if not BOT_TOKEN:
-    raise ValueError("BOT_TOKEN не найден!")
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
@@ -27,12 +22,10 @@ class AddProduct(StatesGroup):
     quantity = State()
     unit = State()
 
-# === ГЛАВНОЕ МЕНЮ ===
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
-    await message.answer("Привет! Умный Холодильник 🧊\n\nЧто делаем?", reply_markup=keyboards.get_main_menu())
+    await message.answer("Привет! 🧊\n\nЧто делаем?", reply_markup=keyboards.get_main_menu())
 
-# === СПИСОК ===
 @dp.message(Command("list"))
 @dp.message(F.text == "📦 Список")
 async def show_list(message: types.Message):
@@ -46,7 +39,6 @@ async def show_list(message: types.Message):
         text += f"{icon} `{name}`: {qty} {unit}\n"
     await message.answer(text, parse_mode="Markdown", reply_markup=keyboards.get_product_keyboard(products))
 
-# === ДОБАВЛЕНИЕ ===
 @dp.callback_query(F.data == "add")
 async def add_product(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer("")
@@ -90,7 +82,6 @@ async def process_unit(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
     await refresh(callback.from_user.id, callback.message.chat.id)
 
-# === КНОПКИ СПИСКА ===
 @dp.callback_query(F.data.startswith("dec_"))
 async def dec(callback: types.CallbackQuery):
     name = unquote(callback.data.split("_",1)[1])
@@ -139,7 +130,6 @@ async def refresh(user_id, chat_id):
     text = f"📋 **Список:**\n\n" + "\n".join(f"{'⚠️' if float(q)<=3 else '✅'} `{n}`: {q} {u}" for n,q,u in products[:50])
     await bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=keyboards.get_product_keyboard(products))
 
-# === ЗАПУСК ===
 async def main():
     await database.init_db()
     print("🤖 Запущен!")
