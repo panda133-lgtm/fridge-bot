@@ -90,7 +90,8 @@ async def show_list(message: types.Message):
 @dp.callback_query(F.data == "act_add")
 async def start_add(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer("")
-    await callback.message.edit_text("Название продукта:", reply_markup=get_main_kb())
+    # Отправляем новое сообщение вместо редактирования старого
+    msg = await callback.message.reply("Название продукта:", reply_markup=get_main_kb())
     await state.set_state(AddProduct.name)
 
 @dp.message(AddProduct.name)
@@ -131,7 +132,12 @@ async def process_unit(callback: types.CallbackQuery, state: FSMContext):
     qty = data['quantity']
     
     await database.add_or_update_product(name, str(qty), unit)
-    await callback.message.edit_text(f"✅ **Готово!** `{name}`: {qty} {unit}", reply_markup=get_main_kb())
+    await callback.message.delete()  # Удаляем старые сообщения
+    await callback.message.chat.send_message(
+        f"✅ **Готово!** `{name}`: {qty} {unit}", 
+        parse_mode="Markdown",
+        reply_markup=get_main_kb()
+    )
     await state.clear()
 
 # === ОДНА ОБРАБОТКА ДЛЯ ВСЕХ КНОПОК ===
@@ -169,12 +175,18 @@ async def handle_all(callback: types.CallbackQuery):
             
         elif data == "act_add":
             await callback.answer("Открываю добавление...", show_alert=False)
-            await callback.message.edit_text("Название продукта:", reply_markup=get_main_kb())
-            await dp.storage.set_value(callback.from_user.id, AddProduct.name, callback.from_user.id)
+            await callback.message.edit_text("Название продукта:", reply_markup=await create_inline_kb())
             
     except Exception as e:
         logging.error(f"Ошибка кнопки: {e}")
         await callback.answer("❌ Ошибка", show_alert=True)
+
+async def create_inline_kb():
+    """Inline меню вместо Reply"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📦 Список", callback_data="act_show_list")],
+        [InlineKeyboardButton(text="➕ Добавить", callback_data="act_add")]
+    ])
 
 async def show_low_products(user_id):
     products = await database.get_all_products()
