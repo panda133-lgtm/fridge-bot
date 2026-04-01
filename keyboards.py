@@ -2,29 +2,20 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeybo
 from urllib.parse import quote
 
 def get_main_menu():
-    """Главное меню внизу экрана"""
-    kb = [
-        [KeyboardButton(text="📦 Список продуктов"), KeyboardButton(text="➕ Добавить продукт")]
-    ]
+    kb = [[KeyboardButton(text="📦 Список"), KeyboardButton(text="➕ Добавить")]]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
 def get_product_keyboard(products):
-    """Кнопки для каждого продукта в списке"""
-    keyboard = []
-    
+    kb = []
     for name, qty, unit in products:
-        safe_name = quote(name)
-        row = [
-            InlineKeyboardButton(text="➖", callback_data=f"dec_{safe_name}"),
+        safe = quote(name)
+        kb.append([
+            InlineKeyboardButton(text="➖", callback_data=f"dec_{safe}"),
             InlineKeyboardButton(text=name, callback_data="info"),
-            InlineKeyboardButton(text="➕", callback_data=f"inc_{safe_name}"),
-            InlineKeyboardButton(text="🗑", callback_data=f"del_{safe_name}")
-        ]
-        keyboard.append(row)
-    
-    # Общие кнопки внизу
-    keyboard.append([InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh")])
-    keyboard.append([InlineKeyboardButton(text="📉 Мало (<3)", callback_data="low_q")])
-    keyboard.append([InlineKeyboardButton(text="➕ Добавить новый", callback_data="add_new")])
-    
-    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+            InlineKeyboardButton(text="➕", callback_data=f"inc_{safe}"),
+            InlineKeyboardButton(text="🗑", callback_data=f"del_{safe}")
+        ])
+    kb.append([InlineKeyboardButton(text="🔄", callback_data="refresh")])
+    kb.append([InlineKeyboardButton(text="📉 Мало", callback_data="low")])
+    kb.append([InlineKeyboardButton(text="➕ Новый", callback_data="add")])
+    return InlineKeyboardMarkup(inline_keyboard=kb)
