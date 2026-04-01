@@ -33,7 +33,7 @@ async def add_or_update_product(name, quantity, unit="штука"):
         INSERT INTO products (name, quantity, unit)
         VALUES (?, ?, ?)
         ON CONFLICT(name) DO UPDATE SET quantity = excluded.quantity, unit = excluded.unit
-    ''', (name, quantity, unit))
+    ''', (name, float(quantity), unit))
     await conn.commit()
     await conn.close()
 
