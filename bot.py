@@ -33,9 +33,8 @@ class AddProduct(StatesGroup):
 CHUNK_SIZE = 20
 last_notification_day = None
 
-# Создаем безопасный идентификатор для продукта
-def get_safe_id(name):
-    return re.sub(r'[^a-z0-9]', '_', name.lower())[:30]
+def get_safe_name(name):
+    return re.sub(r'[^a-z0-9]', '_', str(name).lower())[:30]
 
 def get_main_kb():
     return ReplyKeyboardMarkup(keyboard=[
@@ -46,22 +45,22 @@ async def send_list(message, products, start_idx=0, end_idx=None):
     if end_idx is None:
         end_idx = min(start_idx + CHUNK_SIZE, len(products))
     
-    text = f"📋 **Список ({start_idx+1}-{end_idx} из {len(products)}):**\n\n"
+    text = f"📋 **Список:**\n\n"
     chunk = products[start_idx:end_idx]
     
     for name, qty, unit in chunk:
         icon = "⚠️" if float(qty) <= 3 else "✅"
         text += f"{icon} `{name}`: {qty} {unit}\n"
     
-    # Кнопки для каждого продукта в строке
+    # Кнопки для КАЖДОГО продукта (4 кнопки на строку!)
     kb = []
     for name, qty, unit in chunk:
-        safe_id = get_safe_id(name)
+        safe_name = get_safe_name(name)
         row = [
-            InlineKeyboardButton(text="➖", callback_data=f"d_{safe_id}_dec"),
+            InlineKeyboardButton(text="➖", callback_data=f"d_{safe_name}_dec"),
             InlineKeyboardButton(text=name, callback_data="info"),
-            InlineKeyboardButton(text="➕", callback_data=f"d_{safe_id}_inc"),
-            InlineKeyboardButton(text="🗑", callback_data=f"d_{safe_id}_del")
+            InlineKeyboardButton(text="➕", callback_data=f"d_{safe_name}_inc"),
+            InlineKeyboardButton(text="🗑", callback_data=f"d_{safe_name}_del")
         ]
         kb.append(row)
     
@@ -83,12 +82,12 @@ async def show_list(message: types.Message):
     products = await database.get_all_products()
     if not products:
         markup = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="➕ Добавить", callback_data="add_new")]])
-        await message.answer("❌ Холодильник пуст!\n\nНажми ➕ чтобы добавить.", reply_markup=markup)
+        await message.answer("❌ Пуст!\n\nНажми ➕ чтобы добавить.", reply_markup=markup)
         return
     
     chunks = [products[i:i+CHUNK_SIZE] for i in range(0, len(products), CHUNK_SIZE)]
-    for i, chunk in enumerate(chunks):
-        await send_list(message, products, start_idx=i*CHUNK_SIZE, end_idx=min((i+1)*CHUNK_SIZE, len(products)))
+    for chunk in chunks:
+        await send_list(message, products, products.index(chunk[0]), products.index(chunk[-1]))
 
 @dp.callback_query(F.data == "add_new")
 async def add_product(callback: types.CallbackQuery, state: FSMContext):
@@ -138,46 +137,67 @@ async def process_unit(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
 
 @dp.callback_query(F.data.startswith("d_"))
-async def handle_buttons(callback: types.CallbackQuery):
+async def handle_action(callback: types.CallbackQuery):
     try:
         parts = callback.data.split("_")
-        safe_id = "_".join(parts[1:-1])
+        safe_name = "_".join(parts[1:-1])
         action = parts[-1]
         
         if action == "dec":
-            new_qty = await database.change_quantity(safe_id, -1)
+            new_qty = await database.change_quantity(safe_name, -1)
             await callback.answer(f"✓ Уменьшил", show_alert=False)
         elif action == "inc":
-            new_qty = await database.change_quantity(safe_id, 1)
+            new_qty = await database.change_quantity(safe_name, 1)
             await callback.answer(f"✓ Увеличил", show_alert=False)
         elif action == "del":
-            await database.delete_product(safe_id)
+            await database.delete_product(safe_name)
             await callback.answer(f"✓ Удалил", show_alert=False)
         
-        await refresh_last(callback.from_user.id)
+        await refresh_list(callback.from_user.id)
     except Exception as e:
         await callback.answer("Ошибка", show_alert=True)
+
+@dp.callback_query(F.data.startswith("d_"))
+async def any_action(callback: types.CallbackQuery):
+    try:
+        parts = callback.data.split("_")
+        safe_name = "_".join(parts[1:-1])
+        action = parts[-1]
+        
+        if action == "dec":
+            new_qty = await database.change_quantity(safe_name, -1)
+            await callback.answer(f"✓ Уменьшил", show_alert=False)
+        elif action == "inc":
+            new_qty = await database.change_quantity(safe_name, 1)
+            await callback.answer(f"✓ Увеличил", show_alert=False)
+        elif action == "del":
+            await database.delete_product(safe_name)
+            await callback.answer(f"✓ Удалил", show_alert=False)
+        
+        await refresh_list(callback.from_user.id)
+    except Exception as e:
+        await callback.answer("Ошибка", show_alert=True)
+
+@dp.callback_query(F.data == "info")
+async def any_info(callback: types.CallbackQuery):
+    await callback.answer("Информация о продукте", show_alert=True)
 
 @dp.callback_query(F.data == "refresh")
 async def refresh(callback: types.CallbackQuery):
     await callback.answer("Обновляю...", show_alert=False)
-    await refresh_last(callback.from_user.id)
+    await refresh_list(callback.from_user.id)
 
 @dp.callback_query(F.data == "low")
 async def low_q(callback: types.CallbackQuery):
     await callback.answer("Показываю мало...", show_alert=False)
     await show_low(callback.from_user.id)
 
-@dp.callback_query(F.data == "info")
-async def any_info(callback: types.CallbackQuery):
-    await callback.answer("Информация", show_alert=True)
-
 async def show_low(user_id):
     products = await database.get_all_products()
     low = [(n, q, u) for n, q, u in products if float(q) <= 3]
     
     if not low:
-        await bot.send_message(chat_id=user_id, text="✅ Всё ок! (<3)")
+        await bot.send_message(chat_id=user_id, text="✅ Всё ок! (>3)")
         return
     
     text = "📉 **Мало осталось (≤3):**\n\n" + "\n".join(f"⚠️ `{n}`: {q} {u}" for n, q, _ in low)
@@ -185,7 +205,7 @@ async def show_low(user_id):
     markup = InlineKeyboardMarkup(inline_keyboard=kb)
     await bot.send_message(chat_id=user_id, text=text, parse_mode="Markdown", reply_markup=markup)
 
-async def refresh_last(user_id):
+async def refresh_list(user_id):
     products = await database.get_all_products()
     if not products: 
         await bot.send_message(chat_id=user_id, text="❌ Пуст!")
@@ -194,12 +214,23 @@ async def refresh_last(user_id):
     first = products[:CHUNK_SIZE]
     text = f"📋 **Актуальный список:**\n\n" + "\n".join(f"{'⚠️' if float(q)<=3 else '✅'} `{n}`: {q} {u}" for n, q, u in first)
     
-    kb = [[InlineKeyboardButton(text=f"{n}", callback_data=f"d_{get_safe_id(n)}_inc")] for n, q, _ in first]
+    kb = []
+    for n, q, u in first:
+        safe_name = get_safe_name(n)
+        row = [
+            InlineKeyboardButton(text="➖", callback_data=f"d_{safe_name}_dec"),
+            InlineKeyboardButton(text=n, callback_data="info"),
+            InlineKeyboardButton(text="➕", callback_data=f"d_{safe_name}_inc"),
+            InlineKeyboardButton(text="🗑", callback_data=f"d_{safe_name}_del")
+        ]
+        kb.append(row)
+    
     kb.extend([
         [InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh")],
         [InlineKeyboardButton(text="📉 Показать мало", callback_data="low")],
         [InlineKeyboardButton(text="➕ Добавить новый", callback_data="add_new")]
     ])
+    
     markup = InlineKeyboardMarkup(inline_keyboard=kb)
     await bot.send_message(chat_id=user_id, text=text, parse_mode="Markdown", reply_markup=markup)
 
