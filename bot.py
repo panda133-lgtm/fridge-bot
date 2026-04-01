@@ -48,13 +48,13 @@ async def send_chunk(message, products):
     for name, qty, unit in products:
         encoded = quote(name)
         kb.append([
-            InlineKeyboardButton(text=f"➖ {name} ➕", callback_data=f"d_{encoded}"),
+            InlineKeyboardButton(text=f"➖ {name} ➕", callback_data=f"d_{encoded}")
         ])
     
     kb.extend([
         [InlineKeyboardButton(text="🔄 Обновить", callback_data="r")],
-        [InlineKeyboardButton(text="📉 Мало", callback_data="l")],
-        [InlineKeyboardButton(text="➕ Добавить", callback_data="a")]
+        [InlineKeyboardButton(text="📉 Мало продуктов", callback_data="l")],
+        [InlineKeyboardButton(text="➕ Добавить новый", callback_data="a")]
     ])
     
     markup = InlineKeyboardMarkup(inline_keyboard=kb)
@@ -70,9 +70,9 @@ async def show_list(message: types.Message):
     products = await database.get_all_products()
     if not products:
         markup = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="➕ Добавить", callback_data="a")]
+            [InlineKeyboardButton(text="➕ Добавить продукт", callback_data="a")]
         ])
-        await message.answer("❌ Пуст!", reply_markup=markup)
+        await message.answer("❌ Холодильник пуст!", reply_markup=markup)
         return
     
     chunks = [products[i:i+CHUNK_SIZE] for i in range(0, len(products), CHUNK_SIZE)]
@@ -84,17 +84,17 @@ async def show_list(message: types.Message):
 @dp.callback_query(F.data == "a")
 async def add_product(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer("")
-    msg = await callback.message.reply("Название продукта:", reply_markup=get_main_kb())
+    msg = await callback.message.reply("Напишите название продукта:", reply_markup=get_main_kb())
     await state.set_state(AddProduct.name)
 
 @dp.message(AddProduct.name)
 async def process_name(message: types.Message, state: FSMContext):
     main_kb = get_main_kb()
     if not message.text.strip():
-        await message.answer("⚠️ Введите название!", reply_markup=main_kb)
+        await message.answer("⚠️ Пожалуйста, введите название!", reply_markup=main_kb)
         return
     await state.update_data(name=message.text.strip())
-    await message.answer("Количество (число):", reply_markup=main_kb)
+    await message.answer("Введите количество (числом):", reply_markup=main_kb)
     await state.set_state(AddProduct.quantity)
 
 @dp.message(AddProduct.quantity)
@@ -108,16 +108,16 @@ async def process_quantity(message: types.Message, state: FSMContext):
             [InlineKeyboardButton(text="🥛 Пол-литра", callback_data="u_hal")],
             [InlineKeyboardButton(text="🧱 Пачка", callback_data="u_pack")],
             [InlineKeyboardButton(text="🍶 Бутылка", callback_data="u_bot")],
-            [InlineKeyboardButton(text="🥗 Тарелка", callback_data="u_plt")]
+            [InlineKeyboardButton(text="🥗 Тарелка/блюдо", callback_data="u_plt")]
         ])
-        await message.answer("Выберите единицу:", reply_markup=units_kb)
+        await message.answer("Выберите единицу измерения:", reply_markup=units_kb)
         await state.set_state(AddProduct.unit)
     except ValueError:
-        await message.answer("❌ Число!", reply_markup=get_main_kb())
+        await message.answer("❌ Пожалуйста, введите корректное число!", reply_markup=get_main_kb())
 
 @dp.callback_query(F.data.startswith("u_"))
 async def process_unit(callback: types.CallbackQuery, state: FSMContext):
-    map_unit = {"pie": "штука", "hal": "пол-литра", "pack": "пачка", "bot": "бутылка", "plt": "тарелка"}
+    map_unit = {"pie": "штука", "hal": "пол-литра", "pack": "пачка", "bot": "бутылка", "plt": "блюдо"}
     unit = map_unit[callback.data.split("_")[1]]
     data = await state.get_data()
     name = data['name']
@@ -125,7 +125,7 @@ async def process_unit(callback: types.CallbackQuery, state: FSMContext):
     
     await database.add_or_update_product(name, str(qty), unit)
     await callback.message.delete()
-    await bot.send_message(chat_id=callback.from_user.id, text=f"✅ `{name}`: {qty} {unit}")
+    await bot.send_message(chat_id=callback.from_user.id, text=f"✅ **Готово!** `{name}`: {qty} {unit}", parse_mode="Markdown")
     await state.clear()
 
 @dp.callback_query(F.data.startswith("d_"))
@@ -133,10 +133,10 @@ async def change_qty(callback: types.CallbackQuery):
     try:
         name = unquote(callback.data.split("_")[1])
         new_qty = await database.change_quantity(name, 0)
-        await callback.answer(f"✓ {name}", show_alert=False)
+        await callback.answer(f"✓ Обновлено", show_alert=False)
         await refresh_last(callback.from_user.id)
     except Exception as e:
-        await callback.answer("Ошибка", show_alert=True)
+        await callback.answer("Ошибка при обработке", show_alert=True)
 
 @dp.callback_query(F.data.startswith("r"))
 async def refresh(callback: types.CallbackQuery):
@@ -145,7 +145,7 @@ async def refresh(callback: types.CallbackQuery):
 
 @dp.callback_query(F.data == "l")
 async def low_q(callback: types.CallbackQuery):
-    await callback.answer("Мало...", show_alert=False)
+    await callback.answer("Показываю мало...", show_alert=False)
     await show_low(callback.from_user.id)
 
 @dp.callback_query()
@@ -157,13 +157,13 @@ async def show_low(user_id):
     low = [(n, q, u) for n, q, u in products if float(q) <= 1]
     
     if not low:
-        await bot.send_message(chat_id=user_id, text="✅ Всё ок!")
+        await bot.send_message(chat_id=user_id, text="✅ Все продукты в норме!")
         return
     
-    text = "📉 **Мало:**\n\n" + "\n".join(f"⚠️ `{n}`: {q} {u}" for n, q, _ in low)
+    text = "📉 **Мало осталось:**\n\n" + "\n".join(f"⚠️ `{n}`: {q} {u}" for n, q, _ in low)
     
-    kb = [[InlineKeyboardButton(text=f"{n} ({q})", callback_data=f"d_{quote(n)}")] for n, q, _ in low]
-    kb.append([InlineKeyboardButton(text="🔙 Назад", callback_data="r")])
+    kb = [[InlineKeyboardButton(text=n, callback_data=f"d_{quote(n)}")] for n, q, _ in low]
+    kb.append([InlineKeyboardButton(text="🔙 Назад к списку", callback_data="r")])
     
     markup = InlineKeyboardMarkup(inline_keyboard=kb)
     await bot.send_message(chat_id=user_id, text=text, parse_mode="Markdown", reply_markup=markup)
@@ -172,13 +172,13 @@ async def refresh_last(user_id):
     products = await database.get_all_products()
     if not products: return
     first = products[:CHUNK_SIZE]
-    text = f"📋 **Список:**\n\n" + "\n".join(f"{'⚠️' if float(q)<=1 else '✅'} `{n}`: {q} {u}" for n, q, u in first)
+    text = f"📋 **Актуальный список:**\n\n" + "\n".join(f"{'⚠️' if float(q)<=1 else '✅'} `{n}`: {q} {u}" for n, q, u in first)
     
-    kb = [[InlineKeyboardButton(text=f"{n} ({q})", callback_data=f"d_{quote(n)}")] for n, q, _ in first]
+    kb = [[InlineKeyboardButton(text=f"{n}", callback_data=f"d_{quote(n)}")] for n, q, _ in first]
     kb.extend([
-        [InlineKeyboardButton(text="🔄", callback_data="r")],
-        [InlineKeyboardButton(text="📉", callback_data="l")],
-        [InlineKeyboardButton(text="➕", callback_data="a")]
+        [InlineKeyboardButton(text="🔄 Обновить", callback_data="r")],
+        [InlineKeyboardButton(text="📉 Показать мало", callback_data="l")],
+        [InlineKeyboardButton(text="➕ Добавить новый", callback_data="a")]
     ])
     
     markup = InlineKeyboardMarkup(inline_keyboard=kb)
@@ -201,7 +201,7 @@ async def notification_worker():
                     break
             await asyncio.sleep(300)
         except Exception as e:
-            logging.error(f"Цикл ошибка: {e}")
+            logging.error(f"Цикл уведомления ошибка: {e}")
 
 async def check_notifications():
     try:
@@ -230,4 +230,4 @@ if __name__ == '__main__':
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("Выключен")
+        print("Бот выключен")
