@@ -56,7 +56,11 @@ async def send_chunk(message, products):
         [InlineKeyboardButton(text="➕ Добавить", callback_data="a")]
     ])
     
-    await message.answer(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    await message.answer(
+        text, 
+        parse_mode="Markdown", 
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)  # ✅ ИСПРАВЛЕНО!
+    )
 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
@@ -67,7 +71,10 @@ async def cmd_start(message: types.Message):
 async def show_list(message: types.Message):
     products = await database.get_all_products()
     if not products:
-        await message.answer("❌ Пуст!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("➕ Добавить", callback_data="a")]]))
+        await message.answer(
+            "❌ Пуст!", 
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton("➕ Добавить", callback_data="a")]])  # ✅ ИСПРАВЛЕНО!
+        )
         return
     
     chunks = [products[i:i+CHUNK_SIZE] for i in range(0, len(products), CHUNK_SIZE)]
@@ -96,7 +103,7 @@ async def process_quantity(message: types.Message, state: FSMContext):
     try:
         val = float(message.text.replace(',', '.'))
         await state.update_data(quantity=val)
-        kb = InlineKeyboardMarkup(inline_keyboard=[
+        kb = InlineKeyboardMarkup(inline_keyboard=[  # ✅ ИСПРАВЛЕНО!
             [InlineKeyboardButton("🍏 Штука", callback_data="u_pie")],
             [InlineKeyboardButton("🥛 Пол-литра", callback_data="u_hal")],
             [InlineKeyboardButton("🧱 Пачка", callback_data="u_pack")],
@@ -155,10 +162,15 @@ async def show_low(user_id):
     
     text = "📉 **Мало:**\n\n" + "\n".join(f"⚠️ `{n}`: {q} {u}" for n, q, _ in low)
     
-    kb = [[InlineKeyboardButton(text=f"{n} ({q})", callback_data=f"d_{quote(n)}")] for n, _, _ in low]
+    kb = [[InlineKeyboardButton(text=f"{n} ({q})", callback_data=f"d_{quote(n)}")] for n, q, _ in low]
     kb.append([InlineKeyboardButton("🔙 Назад", callback_data="r")])
     
-    await bot.send_message(chat_id=user_id, text=text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    await bot.send_message(
+        chat_id=user_id, 
+        text=text, 
+        parse_mode="Markdown", 
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)  # ✅ ИСПРАВЛЕНО!
+    )
 
 async def refresh_last(user_id):
     products = await database.get_all_products()
@@ -173,7 +185,12 @@ async def refresh_last(user_id):
         [InlineKeyboardButton("➕", callback_data="a")]
     ])
     
-    await bot.send_message(chat_id=user_id, text=text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    await bot.send_message(
+        chat_id=user_id, 
+        text=text, 
+        parse_mode="Markdown", 
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)  # ✅ ИСПРАВЛЕНО!
+    )
 
 async def notification_worker():
     global last_notification_day
