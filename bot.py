@@ -52,7 +52,6 @@ async def send_list(message, products, start_idx=0, end_idx=None):
         icon = "⚠️" if float(qty) <= 3 else "✅"
         text += f"{icon} `{name}`: {qty} {unit}\n"
     
-    # Кнопки для КАЖДОГО продукта (4 кнопки на строку!)
     kb = []
     for name, qty, unit in chunk:
         safe_name = get_safe_name(name)
@@ -64,7 +63,6 @@ async def send_list(message, products, start_idx=0, end_idx=None):
         ]
         kb.append(row)
     
-    # Общие кнопки внизу
     kb.append([InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh")])
     kb.append([InlineKeyboardButton(text="📉 Мало (<3)", callback_data="low")])
     kb.append([InlineKeyboardButton(text="➕ Новый продукт", callback_data="add_new")])
@@ -140,6 +138,7 @@ async def process_unit(callback: types.CallbackQuery, state: FSMContext):
 async def handle_action(callback: types.CallbackQuery):
     try:
         parts = callback.data.split("_")
+        # Достаём безопасное имя и действие
         safe_name = "_".join(parts[1:-1])
         action = parts[-1]
         
@@ -152,30 +151,13 @@ async def handle_action(callback: types.CallbackQuery):
         elif action == "del":
             await database.delete_product(safe_name)
             await callback.answer(f"✓ Удалил", show_alert=False)
+        else:
+            await callback.answer("Ошибка", show_alert=True)
+            return
         
         await refresh_list(callback.from_user.id)
     except Exception as e:
-        await callback.answer("Ошибка", show_alert=True)
-
-@dp.callback_query(F.data.startswith("d_"))
-async def any_action(callback: types.CallbackQuery):
-    try:
-        parts = callback.data.split("_")
-        safe_name = "_".join(parts[1:-1])
-        action = parts[-1]
-        
-        if action == "dec":
-            new_qty = await database.change_quantity(safe_name, -1)
-            await callback.answer(f"✓ Уменьшил", show_alert=False)
-        elif action == "inc":
-            new_qty = await database.change_quantity(safe_name, 1)
-            await callback.answer(f"✓ Увеличил", show_alert=False)
-        elif action == "del":
-            await database.delete_product(safe_name)
-            await callback.answer(f"✓ Удалил", show_alert=False)
-        
-        await refresh_list(callback.from_user.id)
-    except Exception as e:
+        logging.error(f"Ошибка кнопки: {e}")
         await callback.answer("Ошибка", show_alert=True)
 
 @dp.callback_query(F.data == "info")
@@ -200,7 +182,9 @@ async def show_low(user_id):
         await bot.send_message(chat_id=user_id, text="✅ Всё ок! (>3)")
         return
     
-    text = "📉 **Мало осталось (≤3):**\n\n" + "\n".join(f"⚠️ `{n}`: {q} {u}" for n, q, _ in low)
+    # ИСПРАВЛЕНО: использовали 'u', а не '_'
+    text = "📉 **Мало осталось (≤3):**\n\n" + "\n".join(f"⚠️ `{n}`: {q} {u}" for n, q, u in low)
+    
     kb = [[InlineKeyboardButton(text="🔙 Назад к списку", callback_data="refresh")]]
     markup = InlineKeyboardMarkup(inline_keyboard=kb)
     await bot.send_message(chat_id=user_id, text=text, parse_mode="Markdown", reply_markup=markup)
