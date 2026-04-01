@@ -34,7 +34,7 @@ class AddProduct(StatesGroup):
 CHUNK_SIZE = 20
 last_notification_check_day = None
 
-# Функция для создания главного меню (убрали зависимости от keyboards.py)
+# Функция для создания главного меню
 def create_main_menu():
     kb = [
         [KeyboardButton(text="📦 Список продуктов"), KeyboardButton(text="➕ Добавить продукт")]
@@ -99,21 +99,15 @@ async def start_add(callback: types.CallbackQuery, state: FSMContext):
 
 @dp.message(AddProduct.name)
 async def process_name(message: types.Message, state: FSMContext):
-    if not message.text.strip():
-        # Исправлено: создаём клавиатуру напрямую без импорта
-        main_kb = ReplyKeyboardMarkup(
-            keyboard=[[KeyboardButton(text="📦 Список продуктов"), KeyboardButton(text="➕ Добавить продукт")]], 
-            resize_keyboard=True
-        )
-        await message.answer("⚠️ Введите название продукта:", reply_markup=main_kb)
-        return
-        
-    await state.update_data(name=message.text.strip())
-    # Исправлено: тоже здесь
     main_kb = ReplyKeyboardMarkup(
         keyboard=[[KeyboardButton(text="📦 Список продуктов"), KeyboardButton(text="➕ Добавить продукт")]], 
         resize_keyboard=True
     )
+    if not message.text.strip():
+        await message.answer("⚠️ Введите название продукта:", reply_markup=main_kb)
+        return
+        
+    await state.update_data(name=message.text.strip())
     await message.answer("Теперь напишите количество (числом, можно с запятой):", reply_markup=main_kb)
     await state.set_state(AddProduct.quantity)
 
