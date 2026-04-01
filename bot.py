@@ -10,6 +10,7 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeybo
 from dotenv import load_dotenv
 from aiohttp import web
 from urllib.parse import quote, unquote
+import re
 
 import database
 
@@ -38,6 +39,10 @@ def get_main_kb():
         [KeyboardButton(text="📦 Список продуктов"), KeyboardButton(text="➕ Добавить продукт")]
     ], resize_keyboard=True)
 
+def make_safe_name(name):
+    """Заменяет все спецсимволы на безопасные"""
+    return re.sub(r'[^a-zA-Z0-9_]', '_', name).strip('_')
+
 async def send_chunk(message, products):
     text = f"📋 **Актуальный список:**\n\n"
     for name, qty, unit in products:
@@ -46,12 +51,12 @@ async def send_chunk(message, products):
     
     kb = []
     for name, qty, unit in products:
-        encoded = quote(name)
+        safe_name = make_safe_name(name)
         row = [
-            InlineKeyboardButton(text="➖", callback_data=f"dec_{encoded}"),
+            InlineKeyboardButton(text="➖", callback_data=f"dec_{safe_name}"),
             InlineKeyboardButton(text=name, callback_data="info"),
-            InlineKeyboardButton(text="➕", callback_data=f"inc_{encoded}"),
-            InlineKeyboardButton(text="🗑 Удалить", callback_data=f"del_{encoded}")
+            InlineKeyboardButton(text="➕", callback_data=f"inc_{safe_name}"),
+            InlineKeyboardButton(text="🗑 Удалить", callback_data=f"del_{safe_name}")
         ]
         kb.append(row)
     
@@ -136,18 +141,18 @@ async def handle_buttons(callback: types.CallbackQuery):
         data = callback.data
         
         if data.startswith("dec_"):
-            name = unquote(data.split("_")[1])
-            new_qty = await database.change_quantity(name, -1)
-            await callback.answer(f"✓ {name}: {new_qty}", show_alert=False)
+            safe_name = data.split("_")[1]
+            new_qty = await database.change_quantity(safe_name, -1)
+            await callback.answer(f"✓ {safe_name}: {new_qty}", show_alert=False)
             
         elif data.startswith("inc_"):
-            name = unquote(data.split("_")[1])
-            new_qty = await database.change_quantity(name, 1)
-            await callback.answer(f"✓ {name}: {new_qty}", show_alert=False)
+            safe_name = data.split("_")[1]
+            new_qty = await database.change_quantity(safe_name, 1)
+            await callback.answer(f"✓ {safe_name}: {new_qty}", show_alert=False)
             
         elif data.startswith("del_"):
-            name = unquote(data.split("_")[1])
-            await database.delete_product(name)
+            safe_name = data.split("_")[1]
+            await database.delete_product(safe_name)
             await callback.answer(f"✓ Удален", show_alert=False)
             
         elif data == "refresh":
@@ -175,7 +180,7 @@ async def show_low(user_id):
     
     text = "📉 **Мало осталось (≤1):**\n\n" + "\n".join(f"⚠️ `{n}`: {q} {u}" for n, q, _ in low)
     
-    kb = [[InlineKeyboardButton(text=n, callback_data=f"del_{quote(n)}")] for n, q, _ in low]
+    kb = [[InlineKeyboardButton(text=n, callback_data=f"del_{make_safe_name(n)}")] for n, q, _ in low]
     kb.append([InlineKeyboardButton(text="🔙 Назад к списку", callback_data="refresh")])
     
     markup = InlineKeyboardMarkup(inline_keyboard=kb)
@@ -187,7 +192,7 @@ async def refresh_last(user_id):
     first = products[:CHUNK_SIZE]
     text = f"📋 **Актуальный список:**\n\n" + "\n".join(f"{'⚠️' if float(q)<=1 else '✅'} `{n}`: {q} {u}" for n, q, u in first)
     
-    kb = [[InlineKeyboardButton(text=f"➖ {n} ➕", callback_data=f"inc_{quote(n)}")] for n, q, _ in first]
+    kb = [[InlineKeyboardButton(text=f"➖ {n} ➕", callback_data=f"inc_{make_safe_name(n)}")] for n, q, _ in first]
     kb.extend([
         [InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh")],
         [InlineKeyboardButton(text="📉 Показать мало", callback_data="low_q")],
