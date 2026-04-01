@@ -30,8 +30,6 @@ class AddProduct(StatesGroup):
     quantity = State()
     unit = State()
 
-CHUNK_SIZE = 50
-
 def get_safe_name(name):
     return re.sub(r'[^a-z0-9]', '_', str(name).lower())[:30]
 
@@ -40,8 +38,7 @@ def get_main_kb():
         [KeyboardButton(text="📦 Список"), KeyboardButton(text="➕ Добавить")]
     ], resize_keyboard=True)
 
-async def create_product_kb(products):
-    """Создает кнопки для всех продуктов"""
+async def get_product_keyboard(products):
     kb = []
     for name, qty, unit in products:
         safe_name = get_safe_name(name)
@@ -55,33 +52,11 @@ async def create_product_kb(products):
     
     kb.extend([
         [InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh")],
-        [InlineKeyboardButton(text="📉 Показать мало (<3)", callback_data="low_q")],
-        [InlineKeyboardButton(text="➕ Добавить новый продукт", callback_data="add_new")]
+        [InlineKeyboardButton(text="📉 Мало (<3)", callback_data="low_q")],
+        [InlineKeyboardButton(text="➕ Добавить новый", callback_data="add_new")]
     ])
     
     return InlineKeyboardMarkup(inline_keyboard=kb)
-
-async def send_products_list(message, products):
-    """Отправляет список продуктов с кнопками"""
-    if not products:
-        markup = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="➕ Добавить", callback_data="add_new")]])
-        await message.answer("❌ Холодильник пуст!\n\nНажми ➕ чтобы добавить.", reply_markup=markup)
-        return
-    
-    text = f"📋 **Список ({len(products)}):**\n\n"
-    chunk = products[:CHUNK_SIZE]
-    
-    for name, qty, unit in chunk:
-        icon = "⚠️" if float(qty) <= 3 else "✅"
-        text += f"{icon} `{name}`: {qty} {unit}\n"
-    
-    markup = await create_product_kb(products)
-    msg = await message.answer(text, parse_mode="Markdown", reply_markup=markup)
-    
-    # Сохраняем ID сообщения для пользователя
-    user_last_messages = {}
-    user_last_messages[message.from_user.id] = {'message_id': msg.message_id, 'chat_id': message.chat.id}
-    return msg
 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
@@ -91,7 +66,21 @@ async def cmd_start(message: types.Message):
 @dp.message(F.text == "📦 Список")
 async def show_list(message: types.Message):
     products = await database.get_all_products()
-    await send_products_list(message, products)
+    
+    if not products:
+        markup = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="➕ Добавить", callback_data="add_new")]])
+        await message.answer("❌ Пуст!\n\nНажми ➕ чтобы добавить.", reply_markup=markup)
+        return
+    
+    text = f"📋 **Список ({len(products)}):**\n\n"
+    chunk = products[:50]
+    
+    for name, qty, unit in chunk:
+        icon = "⚠️" if float(qty) <= 3 else "✅"
+        text += f"{icon} `{name}`: {qty} {unit}\n"
+    
+    markup = await get_product_keyboard(products)
+    msg = await message.answer(text, parse_mode="Markdown", reply_markup=markup)
 
 @dp.callback_query(F.data == "add_new")
 async def add_product(callback: types.CallbackQuery, state: FSMContext):
@@ -122,7 +111,7 @@ async def process_quantity(message: types.Message, state: FSMContext):
             [InlineKeyboardButton(text="🍶 Бутылка/шт", callback_data="u_bot")],
             [InlineKeyboardButton(text="🥗 Тарелка/блюдо", callback_data="u_plt")]
         ])
-        await message.answer("Выберите единицу измерения:", reply_markup=units_kb)
+        await message.answer("Выберите единицу:", reply_markup=units_kb)
         await state.set_state(AddProduct.unit)
     except ValueError:
         await message.answer("❌ Неправильное число!", reply_markup=get_main_kb())
@@ -139,29 +128,40 @@ async def process_unit(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.delete()
     await bot.send_message(chat_id=callback.from_user.id, text=f"✅ Готово! `{name}`: {qty} {unit}", parse_mode="Markdown")
     await state.clear()
-    # Показываем обновленный список
-    await refresh_list_from_user(callback.from_user.id)
+    await show_list_with_buttons(callback.from_user.id, callback.message.chat.id)
 
-@dp.callback_query(F.data.startswith("dec_") or F.data.startswith("inc_") or F.data.startswith("del_"))
-async def change_quantity(callback: types.CallbackQuery):
+@dp.callback_query(F.data.startswith("dec_"))
+async def decrease_qty(callback: types.CallbackQuery):
     try:
         parts = callback.data.split("_")
-        action = parts[0]  # dec / inc / del
-        safe_name = "_".join(parts[1:]) if len(parts) > 1 else ""
-        
-        if action == "del":
-            await database.delete_product(safe_name)
-            await callback.answer(f"✓ {safe_name} удален", show_alert=False)
-        elif action == "dec":
-            new_qty = await database.change_quantity(safe_name, -1)
-            await callback.answer(f"✓ {new_qty}", show_alert=False)
-        elif action == "inc":
-            new_qty = await database.change_quantity(safe_name, 1)
-            await callback.answer(f"✓ {new_qty}", show_alert=False)
-        
-        # Отправляем новый список вместо редактирования
-        await refresh_list_from_user(callback.from_user.id)
-        
+        safe_name = "_".join(parts[1:])
+        new_qty = await database.change_quantity(safe_name, -1)
+        await callback.answer(f"✓ {new_qty}", show_alert=False)
+        await show_list_with_buttons(callback.from_user.id, callback.message.chat.id)
+    except Exception as e:
+        logging.error(f"Ошибка: {e}")
+        await callback.answer("Ошибка", show_alert=True)
+
+@dp.callback_query(F.data.startswith("inc_"))
+async def increase_qty(callback: types.CallbackQuery):
+    try:
+        parts = callback.data.split("_")
+        safe_name = "_".join(parts[1:])
+        new_qty = await database.change_quantity(safe_name, 1)
+        await callback.answer(f"✓ {new_qty}", show_alert=False)
+        await show_list_with_buttons(callback.from_user.id, callback.message.chat.id)
+    except Exception as e:
+        logging.error(f"Ошибка: {e}")
+        await callback.answer("Ошибка", show_alert=True)
+
+@dp.callback_query(F.data.startswith("del_"))
+async def delete_item(callback: types.CallbackQuery):
+    try:
+        parts = callback.data.split("_")
+        safe_name = "_".join(parts[1:])
+        await database.delete_product(safe_name)
+        await callback.answer(f"✓ Удален", show_alert=False)
+        await show_list_with_buttons(callback.from_user.id, callback.message.chat.id)
     except Exception as e:
         logging.error(f"Ошибка: {e}")
         await callback.answer("Ошибка", show_alert=True)
@@ -173,7 +173,7 @@ async def any_info(callback: types.CallbackQuery):
 @dp.callback_query(F.data == "refresh")
 async def refresh(callback: types.CallbackQuery):
     await callback.answer("Обновляю...", show_alert=False)
-    await refresh_list_from_user(callback.from_user.id)
+    await show_list_with_buttons(callback.from_user.id, callback.message.chat.id)
 
 @dp.callback_query(F.data == "low_q")
 async def low_q(callback: types.CallbackQuery):
@@ -190,27 +190,24 @@ async def low_q(callback: types.CallbackQuery):
     markup = InlineKeyboardMarkup(inline_keyboard=kb)
     await bot.send_message(chat_id=callback.from_user.id, text=text, parse_mode="Markdown", reply_markup=markup)
 
-async def refresh_list_from_user(user_id):
-    """Отправляет новый список продуктов вместо редактирования старого"""
+async def show_list_with_buttons(user_id, chat_id):
+    """Отправляет список продуктов используя bot.send_message"""
     products = await database.get_all_products()
     
-    # Для текущего чата создадим фейковый объект для show_list
-    class FakeChat:
-        id = user_id
+    if not products:
+        markup = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="➕ Добавить", callback_data="add_new")]])
+        await bot.send_message(chat_id=chat_id, text="❌ Пуст!\n\nНажми ➕ чтобы добавить.", reply_markup=markup)
+        return
     
-    class FakeUser:
-        id = user_id
+    text = f"📋 **Актуальный список ({len(products)}):**\n\n"
+    chunk = products[:50]
     
-    # Создаем минимальный объект сообщения
-    from aiogram.types import Message, Chat, User
+    for name, qty, unit in chunk:
+        icon = "⚠️" if float(qty) <= 3 else "✅"
+        text += f"{icon} `{name}`: {qty} {unit}\n"
     
-    chat = Chat(id=user_id, type="private")
-    user = User(id=user_id, first_name="User", is_bot=False)
-    
-    fake_msg = Message(message_id=999999, date=datetime.now(), chat=chat, from_user=user)
-    
-    # Отправляем новое сообщение через send_products_list
-    await send_products_list(fake_msg, products)
+    markup = await get_product_keyboard(products)
+    await bot.send_message(chat_id=chat_id, text=text, parse_mode="Markdown", reply_markup=markup)
 
 async def notification_worker():
     global last_notification_day
