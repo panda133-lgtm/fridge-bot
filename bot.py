@@ -138,7 +138,6 @@ async def process_unit(callback: types.CallbackQuery, state: FSMContext):
 async def handle_action(callback: types.CallbackQuery):
     try:
         parts = callback.data.split("_")
-        # Достаём безопасное имя и действие
         safe_name = "_".join(parts[1:-1])
         action = parts[-1]
         
@@ -151,9 +150,6 @@ async def handle_action(callback: types.CallbackQuery):
         elif action == "del":
             await database.delete_product(safe_name)
             await callback.answer(f"✓ Удалил", show_alert=False)
-        else:
-            await callback.answer("Ошибка", show_alert=True)
-            return
         
         await refresh_list(callback.from_user.id)
     except Exception as e:
@@ -176,13 +172,14 @@ async def low_q(callback: types.CallbackQuery):
 
 async def show_low(user_id):
     products = await database.get_all_products()
+    # ✅ ИСПРАВЛЕНО: используем n, q, u (не _)
     low = [(n, q, u) for n, q, u in products if float(q) <= 3]
     
     if not low:
         await bot.send_message(chat_id=user_id, text="✅ Всё ок! (>3)")
         return
     
-    # ИСПРАВЛЕНО: использовали 'u', а не '_'
+    # ✅ ИСПРАВЛЕНО: теперь у есть значение!
     text = "📉 **Мало осталось (≤3):**\n\n" + "\n".join(f"⚠️ `{n}`: {q} {u}" for n, q, u in low)
     
     kb = [[InlineKeyboardButton(text="🔙 Назад к списку", callback_data="refresh")]]
