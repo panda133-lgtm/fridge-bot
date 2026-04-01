@@ -10,7 +10,6 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from dotenv import load_dotenv
 from aiohttp import web
 from urllib.parse import quote, unquote
-import time
 
 # Импорт наших модулей
 import database
@@ -39,8 +38,8 @@ class AddProduct(StatesGroup):
 # Размер чанка для разбивки списка
 CHUNK_SIZE = 20
 
-# Последняя отправка уведомления (для контроля частоты)
-last_notification_time = None
+# Глобальные переменные для уведомлений
+last_notification_check_day = None
 
 # === ГЛАВНАЯ КОМАНДА ===
 @dp.message(Command("start"))
@@ -290,40 +289,36 @@ async def refresh_last_message(user_id, last_message=None):
 # === АВТОМАТИЧЕСКИЕ УВЕДОМЛЕНИЯ ===
 async def notification_worker():
     """Фоновый процесс проверки уведомлений"""
+    global last_notification_check_day
+    
+    # Время проверок МСК → UTC: 14:00, 17:00, 17:30 → 11:00, 16:00, 16:30
+    notification_hours = [11, 16, 16]  
+    notification_minutes = ["00", "00", "30"]  
+    
     while True:
-        now = datetime.now()
-        hour = now.hour
-        minute = now.minute
-        
-        # Проверяем уведомления (14:00, 17:00, 17:30 МСК)
-        notification_hours = [11, 16, 16]  # UTC
-        minutes = ["00", "00", "30"]  # минуты
-        
-        should_notify = False
-        check_minute = 0
-        
-        for idx, check_hour in enumerate(notification_hours):
-            target_minutes = minutes[idx]
-            if now.day != last_notification_check_day:
-                continue
+        try:
+            now = datetime.now()
             
-            if hour == check_hour and minute >= int(target_minutes):
-                if now.minute < int(target_minutes) + 1:
-                    should_notify = True
-                    break
-        
-        if should_notify:
-            if now.day != last_notification_check_day:
-                last_notification_check_day = now.day
-                await check_low_quantity_notifications()
-        
-        await asyncio.sleep(60)  # Проверка каждую минуту
+            for idx, check_hour in enumerate(notification_hours):
+                target_minute = notification_minutes[idx]
+                
+                if now.hour == check_hour and now.minute >= int(target_minute):
+                    if now.day != last_notification_check_day:
+                        last_notification_check_day = now.day
+                        try:
+                            await check_low_quantity_notifications()
+                        except Exception as e:
+                            logging.error(f"Ошибка уведомления: {e}")
+                        break
+            
+            await asyncio.sleep(300)  # Проверка каждые 5 минут
+            
+        except Exception as e:
+            logging.error(f"Ошибка цикла уведомлений: {e}")
 
 # Функция проверки низкого запаса
 async def check_low_quantity_notifications():
     """Проверяет наличие продуктов с малым количеством и отправляет уведомления админу"""
-    global last_notification_check_day, last_notification_time
-    
     try:
         products = await database.get_all_products()
         low_products = [(name, qty) for name, qty in products if qty <= 3]
@@ -345,9 +340,6 @@ async def check_low_quantity_notifications():
         await bot.send_message(chat_id=ADMIN_ID, text=text, parse_mode="Markdown")
         logging.info(f"Уведомление отправлено на {now}")
         
-        last_notification_time = now
-        last_notification_check_day = now.day
-        
     except Exception as e:
         logging.error(f"Ошибка проверки уведомлений: {e}")
 
@@ -365,8 +357,6 @@ async def start_health_server():
     print("✅ Health server started on port 8080")
 
 # === ЗАПУСК ===
-last_notification_check_day = None
-
 async def main():
     try:
         await database.init_db()
