@@ -59,7 +59,7 @@ async def send_chunk(message, products):
     await message.answer(
         text, 
         parse_mode="Markdown", 
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)  # ✅ ИСПРАВЛЕНО!
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
     )
 
 @dp.message(Command("start"))
@@ -73,7 +73,7 @@ async def show_list(message: types.Message):
     if not products:
         await message.answer(
             "❌ Пуст!", 
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton("➕ Добавить", callback_data="a")]])  # ✅ ИСПРАВЛЕНО!
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton("➕ Добавить", callback_data="a")]])
         )
         return
     
@@ -103,7 +103,7 @@ async def process_quantity(message: types.Message, state: FSMContext):
     try:
         val = float(message.text.replace(',', '.'))
         await state.update_data(quantity=val)
-        kb = InlineKeyboardMarkup(inline_keyboard=[  # ✅ ИСПРАВЛЕНО!
+        kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton("🍏 Штука", callback_data="u_pie")],
             [InlineKeyboardButton("🥛 Пол-литра", callback_data="u_hal")],
             [InlineKeyboardButton("🧱 Пачка", callback_data="u_pack")],
@@ -162,14 +162,14 @@ async def show_low(user_id):
     
     text = "📉 **Мало:**\n\n" + "\n".join(f"⚠️ `{n}`: {q} {u}" for n, q, _ in low)
     
-    kb = [[InlineKeyboardButton(text=f"{n} ({q})", callback_data=f"d_{quote(n)}")] for n, q, _ in low]
+    kb = [[InlineKeyboardButton(text=f"{n} ({q})", callback_data=f"d_{quote(n)}")] for n, _, _ in low]
     kb.append([InlineKeyboardButton("🔙 Назад", callback_data="r")])
     
     await bot.send_message(
         chat_id=user_id, 
         text=text, 
         parse_mode="Markdown", 
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)  # ✅ ИСПРАВЛЕНО!
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
     )
 
 async def refresh_last(user_id):
@@ -189,7 +189,7 @@ async def refresh_last(user_id):
         chat_id=user_id, 
         text=text, 
         parse_mode="Markdown", 
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)  # ✅ ИСПРАВЛЕНО!
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
     )
 
 async def notification_worker():
