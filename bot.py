@@ -125,7 +125,7 @@ async def process_unit(callback: types.CallbackQuery, state: FSMContext):
 async def change_qty(callback: types.CallbackQuery):
     try:
         name = unquote(callback.data.split("_")[1])
-        new_qty = await database.change_quantity(name, 0)  # просто обновляем список
+        new_qty = await database.change_quantity(name, 0)
         await callback.answer(f"✓ {name}", show_alert=False)
         await refresh_last(callback.from_user.id)
     except Exception as e:
@@ -141,7 +141,7 @@ async def low_q(callback: types.CallbackQuery):
     await callback.answer("Мало...", show_alert=False)
     await show_low(callback.from_user.id)
 
-@dp.callback_query()  # Обработка ВСЕХ оставшихся callbacks
+@dp.callback_query()
 async def any_callback(callback: types.CallbackQuery):
     await callback.answer("❌ Кнопка недоступна", show_alert=True)
 
@@ -153,9 +153,9 @@ async def show_low(user_id):
         await bot.send_message(chat_id=user_id, text="✅ Всё ок!")
         return
     
-    text = "📉 **Мало:**\n\n" + "\n".join(f"⚠️ `{n}`: {q} {u}" for n, q, u in low)
+    text = "📉 **Мало:**\n\n" + "\n".join(f"⚠️ `{n}`: {q} {u}" for n, q, _ in low)
     
-    kb = [[InlineKeyboardButton(text=f"{n} ({q})", callback_data=f"d_{quote(n)}")] for n, q, _ in low]
+    kb = [[InlineKeyboardButton(text=f"{n} ({q})", callback_data=f"d_{quote(n)}")] for n, _, _ in low]
     kb.append([InlineKeyboardButton("🔙 Назад", callback_data="r")])
     
     await bot.send_message(chat_id=user_id, text=text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
