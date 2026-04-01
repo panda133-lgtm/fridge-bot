@@ -31,10 +31,7 @@ class AddProduct(StatesGroup):
     unit = State()
 
 CHUNK_SIZE = 50
-last_notification_day = None
-
-# Храним последнее сообщение от каждого пользователя для обновления
-user_last_messages = {}
+user_last_messages = {}  # Храним последнее сообщение для обновления
 
 def get_safe_name(name):
     return re.sub(r'[^a-z0-9]', '_', str(name).lower())[:30]
@@ -44,15 +41,10 @@ def get_main_kb():
         [KeyboardButton(text="📦 Список"), KeyboardButton(text="➕ Добавить")]
     ], resize_keyboard=True)
 
-async def create_product_rows(products, start_idx=0, end_idx=None):
-    """Создает строки с кнопками для продуктов"""
-    if end_idx is None:
-        end_idx = min(start_idx + CHUNK_SIZE, len(products))
-    
-    chunk = products[start_idx:end_idx]
+async def get_product_keyboard(products):
+    """Создает кнопки для всех продуктов (одинаково каждый раз)"""
     kb = []
-    
-    for name, qty, unit in chunk:
+    for name, qty, unit in products:
         safe_name = get_safe_name(name)
         row = [
             InlineKeyboardButton(text="➖", callback_data=f"d_{safe_name}_dec"),
@@ -62,51 +54,40 @@ async def create_product_rows(products, start_idx=0, end_idx=None):
         ]
         kb.append(row)
     
-    # Общие кнопки
     kb.extend([
-        [InlineKeyboardButton(text="🔄 Обновить список", callback_data="refresh")],
+        [InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh")],
         [InlineKeyboardButton(text="📉 Мало (<3)", callback_data="low")],
         [InlineKeyboardButton(text="➕ Новый продукт", callback_data="add_new")]
     ])
     
-    return kb
+    return InlineKeyboardMarkup(inline_keyboard=kb)
 
-async def send_product_list(message, products, is_update=False):
-    """Отправляет или обновляет список продуктов"""
-    start_idx = 0
-    end_idx = min(CHUNK_SIZE, len(products))
-    chunk = products[start_idx:end_idx]
+async def send_message_with_buttons(chat_id, text, msg_obj=None):
+    """Отправляет или обновляет сообщение с кнопками"""
+    markup = await get_product_keyboard(await database.get_all_products())
     
-    text = f"📋 **Актуальный список ({len(products)}):**\n\n"
-    
-    for name, qty, unit in chunk:
-        icon = "⚠️" if float(qty) <= 3 else "✅"
-        text += f"{icon} `{name}`: {qty} {unit}\n"
-    
-    kb = await create_product_rows(products, start_idx, end_idx)
-    markup = InlineKeyboardMarkup(inline_keyboard=kb)
-    
-    if is_update and message.id == user_last_messages.get(message.from_user.id, {}).get('message_id'):
+    if msg_obj and hasattr(msg_obj, 'message_id'):
         # Обновляем старое сообщение
-        await bot.edit_message_text(
-            chat_id=message.chat.id,
-            message_id=message.id,
-            text=text,
-            parse_mode="Markdown",
-            reply_markup=markup
-        )
-    else:
-        # Отправляем новое сообщение
-        msg = await message.answer(text, parse_mode="Markdown", reply_markup=markup)
-        
-        # Сохраняем ID для будущего обновления
-        user_last_messages[message.from_user.id] = {
-            'message_id': msg.id,
-            'chat_id': message.chat.id,
-            'products': products
-        }
-        
-        return msg
+        try:
+            await bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=msg_obj.message_id,
+                text=text,
+                parse_mode="Markdown",
+                reply_markup=markup
+            )
+            return msg_obj.message_id
+        except Exception as e:
+            logging.error(f"Ошибка обновления: {e}")
+    
+    # Отправляем новое сообщение
+    msg = await bot.send_message(
+        chat_id=chat_id,
+        text=text,
+        parse_mode="Markdown",
+        reply_markup=markup
+    )
+    return msg.message_id
 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
@@ -118,11 +99,24 @@ async def show_list(message: types.Message):
     products = await database.get_all_products()
     
     if not products:
-        markup = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="➕ Добавить продукт", callback_data="add_new")]])
-        await message.answer("❌ Холодильник пуст!\n\nНажми ➕ чтобы добавить.", reply_markup=markup)
+        markup = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="➕ Добавить", callback_data="add_new")]])
+        await message.answer("❌ Пуст!\n\nНажми ➕ чтобы добавить.", reply_markup=markup)
         return
     
-    await send_product_list(message, products)
+    # Сохраняем первое сообщение пользователя для обновления
+    user_last_messages[message.from_user.id] = {'message_id': message.message_id, 'products': products}
+    
+    text = f"📋 **Актуальный список ({len(products)}):**\n\n"
+    chunk = products[:CHUNK_SIZE]
+    
+    for name, qty, unit in chunk:
+        icon = "⚠️" if float(qty) <= 3 else "✅"
+        text += f"{icon} `{name}`: {qty} {unit}\n"
+    
+    markup = await get_product_keyboard(products)
+    
+    msg = await message.answer(text, parse_mode="Markdown", reply_markup=markup)
+    user_last_messages[message.from_user.id]['message_id'] = msg.message_id
 
 @dp.callback_query(F.data == "add_new")
 async def add_product(callback: types.CallbackQuery, state: FSMContext):
@@ -170,8 +164,8 @@ async def process_unit(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.delete()
     await bot.send_message(chat_id=callback.from_user.id, text=f"✅ Готово! `{name}`: {qty} {unit}", parse_mode="Markdown")
     await state.clear()
-    # Обновить после добавления
-    await refresh_list_from_callback(callback.from_user.id, callback.from_user.id)
+    # Обновляем список после добавления
+    await refresh_last(callback.from_user.id, callback.from_user.id)
 
 @dp.callback_query(F.data.startswith("d_"))
 async def handle_action(callback: types.CallbackQuery):
@@ -182,15 +176,16 @@ async def handle_action(callback: types.CallbackQuery):
         
         if action == "dec":
             new_qty = await database.change_quantity(safe_name, -1)
-            await callback.answer(f"✓ Уменьшил", show_alert=False)
+            await callback.answer(f"✓ {new_qty}", show_alert=False)
         elif action == "inc":
             new_qty = await database.change_quantity(safe_name, 1)
-            await callback.answer(f"✓ Увеличил", show_alert=False)
+            await callback.answer(f"✓ {new_qty}", show_alert=False)
         elif action == "del":
             await database.delete_product(safe_name)
-            await callback.answer(f"✓ Удалил", show_alert=False)
+            await callback.answer(f"✓ Удален", show_alert=False)
         
-        await refresh_last(callback.from_user.id)
+        # Обновляем ТО ЖЕ сообщение
+        await refresh_last(callback.from_user.id, callback.from_user.id)
     except Exception as e:
         logging.error(f"Ошибка кнопки: {e}")
         await callback.answer("Ошибка", show_alert=True)
@@ -202,57 +197,48 @@ async def any_info(callback: types.CallbackQuery):
 @dp.callback_query(F.data == "refresh")
 async def refresh(callback: types.CallbackQuery):
     await callback.answer("Обновляю...", show_alert=False)
-    await refresh_last(callback.from_user.id)
+    await refresh_last(callback.from_user.id, callback.from_user.id)
 
 @dp.callback_query(F.data == "low")
 async def low_q(callback: types.CallbackQuery):
     await callback.answer("Показываю мало...", show_alert=False)
     await show_low(callback.from_user.id)
 
-async def refresh_last(user_id):
-    await refresh_list_from_callback(user_id, user_id)
-
-async def refresh_list_from_callback(user_id, source_chat):
-    try:
-        msg_data = user_last_messages.get(source_chat)
-        
-        if not msg_data:
-            await bot.send_message(chat_id=user_id, text="❌ Найдено свежих данных")
-            return
-        
+async def refresh_last(user_id, source_chat):
+    """Обновляет последнее сообщение от пользователя (если есть) или отправляет новое"""
+    msg_data = user_last_messages.get(source_chat)
+    
+    if msg_data:
         msg_id = msg_data['message_id']
-        chat_id = msg_data['chat_id']
         products = await database.get_all_products()
         
         if not products:
-            await bot.edit_message_text(chat_id=chat_id, message_id=msg_id, text="❌ Холодильник пуст!")
+            await bot.edit_message_text(chat_id=user_id, message_id=msg_id, text="❌ Пуст!")
             return
         
-        start_idx = 0
-        end_idx = min(CHUNK_SIZE, len(products))
-        chunk = products[start_idx:end_idx]
-        
         text = f"📋 **Актуальный список ({len(products)}):**\n\n"
+        chunk = products[:CHUNK_SIZE]
+        
         for name, qty, unit in chunk:
             icon = "⚠️" if float(qty) <= 3 else "✅"
             text += f"{icon} `{name}`: {qty} {unit}\n"
         
-        kb = await create_product_rows(products, start_idx, end_idx)
-        markup = InlineKeyboardMarkup(inline_keyboard=kb)
+        markup = await get_product_keyboard(products)
         
         await bot.edit_message_text(
-            chat_id=chat_id,
+            chat_id=user_id,
             message_id=msg_id,
             text=text,
             parse_mode="Markdown",
             reply_markup=markup
         )
         
-        # Обновить сохраненные данные
-        user_last_messages[source_chat] = {'message_id': msg_id, 'chat_id': chat_id, 'products': products}
+        # Обновляем сохраненные данные
+        user_last_messages[source_chat] = {'message_id': msg_id, 'products': products}
         
-    except Exception as e:
-        logging.error(f"Ошибка обновления: {e}")
+    else:
+        # Если сообщения нет, отправляем новое и сохраняем
+        await show_list(types.Message(**{'from_user': user_last_messages.get(user_id, {}).get('user', type('User', (), {'id': user_id})()), 'chat': None}))
 
 async def show_low(user_id):
     products = await database.get_all_products()
