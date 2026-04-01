@@ -170,7 +170,6 @@ async def handle_all(callback: types.CallbackQuery):
         elif data == "act_add":
             await callback.answer("Открываю добавление...", show_alert=False)
             await callback.message.edit_text("Название продукта:", reply_markup=get_main_kb())
-            await dp.storage.set_data(callback.from_user.id, AddProduct.name)
             await dp.storage.set_value(callback.from_user.id, AddProduct.name, callback.from_user.id)
             
     except Exception as e:
