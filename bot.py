@@ -67,7 +67,7 @@ async def send_chunk(message, products):
     
     keyboard.append([InlineKeyboardButton(text="🔄 Обновить", callback_data="act_refresh")])
     keyboard.append([InlineKeyboardButton(text="📉 Мало продуктов", callback_data="act_low_q")])
-    keyboard.append([InlineKeyboardButton(text="➕ Добавить", callback_data="act_add")])
+    keyboard.append([InlineKeyboardButton(text="➕ Добавить новый", callback_data="act_add")])
     
     await message.answer(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard))
 
@@ -90,18 +90,21 @@ async def show_list(message: types.Message):
 @dp.callback_query(F.data == "act_add")
 async def start_add(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer("")
-    # Отправляем новое сообщение вместо редактирования старого
-    msg = await callback.message.reply("Название продукта:", reply_markup=get_main_kb())
+    # ❌ НЕ edit_text, а просто отправить новое сообщение!
+    msg = await callback.message.reply(
+        "Напишите название продукта (например: Молоко):", 
+        reply_markup=get_main_kb()
+    )
     await state.set_state(AddProduct.name)
 
 @dp.message(AddProduct.name)
 async def process_name(message: types.Message, state: FSMContext):
     main_kb = get_main_kb()
     if not message.text.strip():
-        await message.answer("⚠️ Введите название!", reply_markup=main_kb)
+        await message.answer("⚠️ Введите название продукта:", reply_markup=main_kb)
         return
     await state.update_data(name=message.text.strip())
-    await message.answer("Количество (число):", reply_markup=main_kb)
+    await message.answer("Теперь напишите количество (числом):", reply_markup=main_kb)
     await state.set_state(AddProduct.quantity)
 
 @dp.message(AddProduct.quantity)
@@ -118,10 +121,10 @@ async def process_quantity(message: types.Message, state: FSMContext):
             [InlineKeyboardButton(text="🍶 Бутылка", callback_data="u_bot")],
             [InlineKeyboardButton(text="🥗 Тарелка", callback_data="u_plt")]
         ])
-        await message.answer("Выберите единицу:", reply_markup=units_kb)
+        await message.answer("Выберите единицу измерения:", reply_markup=units_kb)
         await state.set_state(AddProduct.unit)
     except ValueError:
-        await message.answer("❌ Неправильное число!", reply_markup=get_main_kb())
+        await message.answer("❌ Пожалуйста, введите корректное число!", reply_markup=get_main_kb())
 
 @dp.callback_query(F.data.startswith("u_"))
 async def process_unit(callback: types.CallbackQuery, state: FSMContext):
@@ -132,15 +135,15 @@ async def process_unit(callback: types.CallbackQuery, state: FSMContext):
     qty = data['quantity']
     
     await database.add_or_update_product(name, str(qty), unit)
-    await callback.message.delete()  # Удаляем старые сообщения
-    await callback.message.chat.send_message(
-        f"✅ **Готово!** `{name}`: {qty} {unit}", 
-        parse_mode="Markdown",
-        reply_markup=get_main_kb()
+    await callback.message.delete()
+    await bot.send_message(
+        chat_id=callback.from_user.id, 
+        text=f"✅ **Готово!** `{name}`: {qty} {unit}", 
+        parse_mode="Markdown"
     )
     await state.clear()
 
-# === ОДНА ОБРАБОТКА ДЛЯ ВСЕХ КНОПОК ===
+# === ОБРАБОТКА ВСЕХ КНОПОК ===
 @dp.callback_query(F.data.startswith(("d_", "act_")))
 async def handle_all(callback: types.CallbackQuery):
     try:
@@ -175,26 +178,24 @@ async def handle_all(callback: types.CallbackQuery):
             
         elif data == "act_add":
             await callback.answer("Открываю добавление...", show_alert=False)
-            await callback.message.edit_text("Название продукта:", reply_markup=await create_inline_kb())
+            msg = await callback.message.reply(
+                "Напишите название продукта (например: Молоко):", 
+                reply_markup=get_main_kb()
+            )
+            await dp.storage.set_data(callback.from_user.id, AddProduct.name)
+            await dp.storage.set_value(callback.from_user.id, AddProduct.name, callback.from_user.id)
             
     except Exception as e:
         logging.error(f"Ошибка кнопки: {e}")
-        await callback.answer("❌ Ошибка", show_alert=True)
-
-async def create_inline_kb():
-    """Inline меню вместо Reply"""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📦 Список", callback_data="act_show_list")],
-        [InlineKeyboardButton(text="➕ Добавить", callback_data="act_add")]
-    ])
+        await callback.answer("❌ Ошибка при обработке", show_alert=True)
 
 async def show_low_products(user_id):
     products = await database.get_all_products()
     low = [(n, q, u) for n, q, u in products if float(q) <= 1]
     
     if not low:
-        kb = [[InlineKeyboardButton(text="🔙 Назад", callback_data="act_refresh")]]
-        await bot.send_message(chat_id=user_id, text="✅ Всё ок!", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+        kb = [[InlineKeyboardButton(text="🔙 Назад к списку", callback_data="act_refresh")]]
+        await bot.send_message(chat_id=user_id, text="✅ Все продукты в нормальном количестве!", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
         return
     
     text = "📉 **Мало осталось:**\n\n"
@@ -212,8 +213,8 @@ async def show_low_products(user_id):
         ]
         keyboard.append(row)
     
-    keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="act_refresh")])
-    keyboard.append([InlineKeyboardButton(text="➕ Добавить", callback_data="act_add")])
+    keyboard.append([InlineKeyboardButton(text="🔙 Назад к списку", callback_data="act_refresh")])
+    keyboard.append([InlineKeyboardButton(text="➕ Добавить продукт", callback_data="act_add")])
     
     await bot.send_message(chat_id=user_id, text=text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard))
 
@@ -222,7 +223,7 @@ async def refresh_last(user_id):
     if not products:
         return
     first = products[:CHUNK_SIZE]
-    text = f"📋 **Список:**\n\n"
+    text = f"📋 **Актуальный список:**\n\n"
     for name, qty, unit in first:
         icon = "⚠️" if float(qty) <= 1 else "✅"
         text += f"{icon} `{name}`: {qty} {unit}\n"
@@ -238,9 +239,9 @@ async def refresh_last(user_id):
         ]
         keyboard.append(row)
     
-    keyboard.append([InlineKeyboardButton(text="🔄 Обновить", callback_data="act_refresh")])
+    keyboard.append([InlineKeyboardButton(text="🔄 Обновить список", callback_data="act_refresh")])
     keyboard.append([InlineKeyboardButton(text="📉 Мало продуктов", callback_data="act_low_q")])
-    keyboard.append([InlineKeyboardButton(text="➕ Добавить", callback_data="act_add")])
+    keyboard.append([InlineKeyboardButton(text="➕ Добавить продукт", callback_data="act_add")])
     
     await bot.send_message(chat_id=user_id, text=text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard))
 
