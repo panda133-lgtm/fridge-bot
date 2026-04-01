@@ -3,7 +3,7 @@ import logging
 import os
 from datetime import datetime
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import Command
+from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
@@ -11,11 +11,9 @@ from dotenv import load_dotenv
 from aiohttp import web
 from urllib.parse import quote, unquote
 
-# Импорт наших модулей
 import database
 import keyboards
 
-# Загрузка переменных из .env
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
@@ -23,23 +21,17 @@ ADMIN_ID = int(os.getenv("ADMIN_ID"))
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN не найден в файле .env!")
 
-# Настройка логирования
 logging.basicConfig(level=logging.INFO)
 
-# Инициализация бота и диспетчера
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# Машина состояний
 class AddProduct(StatesGroup):
     name = State()
     quantity = State()
     unit = State()
 
-# Размер чанка для разбивки списка
 CHUNK_SIZE = 20
-
-# Глобальные переменные для уведомлений
 last_notification_check_day = None
 
 # === ГЛАВНАЯ КОМАНДА ===
@@ -52,7 +44,6 @@ async def cmd_start(message: types.Message):
         reply_markup=keyboards.get_main_menu()
     )
 
-# Показать список
 @dp.message(Command("list"))
 @dp.message(F.text == "📦 Список продуктов")
 async def show_list(message: types.Message):
@@ -74,7 +65,6 @@ async def show_list(message: types.Message):
         for chunk in chunks[5:]:
             await send_list_chunk(message, chunk)
 
-# Отправка одного куска списка
 async def send_list_chunk(message, products, current=None, total=None):
     status_prefix = ""
     if current and total:
@@ -90,7 +80,7 @@ async def send_list_chunk(message, products, current=None, total=None):
         encoded_name = quote(name)
         row = [
             InlineKeyboardButton(text="➖", callback_data=f"dec_{encoded_name}"),
-            InlineKeyboardButton(text=f"{name} ({qty} {unit})", callback_data="info"),
+            InlineKeyboardButton(text=f"{name}", callback_data="info"),
             InlineKeyboardButton(text="➕", callback_data=f"inc_{encoded_name}"),
             InlineKeyboardButton(text="🗑", callback_data=f"del_{encoded_name}")
         ]
@@ -105,7 +95,6 @@ async def send_list_chunk(message, products, current=None, total=None):
         reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard)
     )
 
-# Добавить продукт
 @dp.message(Command("add"))
 @dp.message(F.text == "➕ Добавить вручную")
 async def start_add_process(message: types.Message, state: FSMContext):
@@ -125,7 +114,6 @@ async def process_quantity(message: types.Message, state: FSMContext):
         await state.update_data(quantity=float(message.text.replace(',', '.')))
         await message.answer("Выберите единицу измерения:")
         
-        # Кнопки выбора единиц измерения
         units_kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🍏 Штука/шт.", callback_data="unit_piece")],
             [InlineKeyboardButton(text="🥛 Пол-литра/шт.", callback_data="unit_half")],
@@ -139,7 +127,6 @@ async def process_quantity(message: types.Message, state: FSMContext):
     except ValueError:
         await message.answer("Пожалуйста, введите корректное число!")
 
-# Выбор единицы измерения
 @dp.callback_query(F.data.startswith("unit_"))
 async def process_unit(callback: types.CallbackQuery, state: FSMContext):
     unit_map = {
@@ -160,40 +147,25 @@ async def process_unit(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
 
 # === ОБРАБОТКА КНОПОК ===
-
-async def handle_quantity_change(callback, operation, amount):
+@dp.callback_query(F.data.startswith(("inc_", "dec_", "del_")))
+async def handle_quantity_change(callback: types.CallbackQuery):
+    operation = "inc" if callback.data.startswith("inc_") else ("dec" if callback.data.startswith("dec_") else "del")
+    amount = 1 if operation == "inc" else (-1 if operation == "dec" else None)
+    
     try:
         name = unquote(callback.data.split("_", 1)[1])
-        new_qty = await database.change_quantity(name, amount)
-        await callback.answer(f"✓ {name}: {new_qty}", show_alert=False)
+        
+        if operation == "del":
+            await database.delete_product(name)
+            await callback.answer(f"✓ {name} удален", show_alert=False)
+        else:
+            new_qty = await database.change_quantity(name, amount)
+            await callback.answer(f"✓ {name}: {new_qty}", show_alert=False)
         
         await refresh_last_message(callback.from_user.id)
     except Exception as e:
         await callback.answer(f"Ошибка: {e}", show_alert=True)
         logging.error(f"Operation error: {e}")
-
-@dp.callback_query(F.data.startswith("inc_"))
-async def increase_qty(callback: types.CallbackQuery):
-    await handle_quantity_change(callback, 'inc', 1)
-
-@dp.callback_query(F.data.startswith("dec_"))
-async def decrease_qty(callback: types.CallbackQuery):
-    await handle_quantity_change(callback, 'dec', -1)
-
-@dp.callback_query(F.data.startswith("del_"))
-async def delete_item(callback: types.CallbackQuery):
-    try:
-        name = unquote(callback.data.split("_", 1)[1])
-        await database.delete_product(name)
-        await callback.answer(f"✓ {name} удален", show_alert=False)
-        
-        await refresh_last_message(callback.from_user.id)
-    except Exception as e:
-        await callback.answer(f"Ошибка: {e}", show_alert=True)
-        logging.error(f"Delete error: {e}")
-
-# Сохранение ID последнего сообщения от пользователя
-user_last_messages = {}
 
 @dp.callback_query(F.data == "refresh_list")
 async def refresh_list(callback: types.CallbackQuery):
@@ -204,6 +176,11 @@ async def refresh_list(callback: types.CallbackQuery):
 async def show_low_quantity(callback: types.CallbackQuery):
     await callback.answer("Показываю продукты с низким запасом...")
     await show_low_quantity_list(callback.from_user.id)
+
+@dp.callback_query(F.data == "add_manual")
+async def add_manual(callback: types.CallbackQuery):
+    await callback.answer("Открываю добавление...")
+    await cmd_start(callback.message)
 
 async def show_low_quantity_list(user_id):
     products = await database.get_all_products()
@@ -227,7 +204,7 @@ async def show_low_quantity_list(user_id):
         encoded_name = quote(name)
         row = [
             InlineKeyboardButton(text="➖", callback_data=f"dec_{encoded_name}"),
-            InlineKeyboardButton(text=f"{name} ({qty} {unit})", callback_data="info"),
+            InlineKeyboardButton(text=f"{name}", callback_data="info"),
             InlineKeyboardButton(text="➕", callback_data=f"inc_{encoded_name}"),
             InlineKeyboardButton(text="🗑", callback_data=f"del_{encoded_name}")
         ]
@@ -237,7 +214,6 @@ async def show_low_quantity_list(user_id):
     
     await bot.send_message(chat_id=user_id, text=text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard))
 
-# Обновление списка (общая функция)
 async def refresh_last_message(user_id):
     try:
         await asyncio.sleep(0.1)
@@ -263,7 +239,7 @@ async def refresh_last_message(user_id):
             encoded_name = quote(name)
             row = [
                 InlineKeyboardButton(text="➖", callback_data=f"dec_{encoded_name}"),
-                InlineKeyboardButton(text=f"{name} ({qty} {unit})", callback_data="info"),
+                InlineKeyboardButton(text=f"{name}", callback_data="info"),
                 InlineKeyboardButton(text="➕", callback_data=f"inc_{encoded_name}"),
                 InlineKeyboardButton(text="🗑", callback_data=f"del_{encoded_name}")
             ]
@@ -284,10 +260,8 @@ async def refresh_last_message(user_id):
 
 # === АВТОМАТИЧЕСКИЕ УВЕДОМЛЕНИЯ ===
 async def notification_worker():
-    """Фоновый процесс проверки уведомлений"""
     global last_notification_check_day
     
-    # Время проверок МСК → UTC: 14:00, 17:00, 17:30 → 11:00, 16:00, 16:30
     notification_hours = [11, 16, 16]  
     notification_minutes = ["00", "00", "30"]  
     
@@ -307,13 +281,12 @@ async def notification_worker():
                             logging.error(f"Ошибка уведомления: {e}")
                         break
             
-            await asyncio.sleep(300)  # Проверка каждые 5 минут
+            await asyncio.sleep(300)  
             
         except Exception as e:
             logging.error(f"Ошибка цикла уведомлений: {e}")
 
 async def check_low_quantity_notifications():
-    """Проверяет наличие продуктов с малым количеством и отправляет уведомления админу"""
     try:
         products = await database.get_all_products()
         low_products = [(name, qty, unit) for name, qty, unit in products if float(qty) <= 1]
