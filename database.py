@@ -27,23 +27,26 @@ async def add_or_update_product(name, qty, unit="шт."):
         ''', (name, float(qty), unit))
         await db.commit()
 
-async def change_quantity_by_id(product_id, delta):
-    """Изменяет количество по ID продукта"""
+async def change_quantity(name, delta):
     async with aiosqlite.connect(DB_NAME) as db:
-        await db.execute('UPDATE products SET quantity = quantity + ? WHERE id = ?', (delta, product_id))
+        await db.execute('UPDATE products SET quantity = quantity + ? WHERE name = ?', (delta, name))
         await db.commit()
-        async with db.execute('SELECT quantity FROM products WHERE id = ?', (product_id,)) as cur:
+        async with db.execute('SELECT quantity FROM products WHERE name = ?', (name,)) as cur:
             result = await cur.fetchone()
             return result[0] if result else 0
 
+async def delete_product(name):
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute('DELETE FROM products WHERE name = ?', (name,))
+        await db.commit()
+
+# === НОВЫЕ ФУНКЦИИ (добавь только это!) ===
+async def change_quantity_by_id(product_id, delta):
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute('UPDATE products SET quantity = quantity + ? WHERE id = ?', (delta, product_id))
+        await db.commit()
+
 async def delete_product_by_id(product_id):
-    """Удаляет продукт по ID"""
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute('DELETE FROM products WHERE id = ?', (product_id,))
         await db.commit()
-
-async def get_product_by_id(product_id):
-    """Получает продукт по ID"""
-    async with aiosqlite.connect(DB_NAME) as db:
-        async with db.execute('SELECT name, quantity, unit FROM products WHERE id = ?', (product_id,)) as cur:
-            return await cur.fetchone()
