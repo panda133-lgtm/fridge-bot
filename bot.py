@@ -92,6 +92,19 @@ async def cmd_list(message: types.Message):
     await send_full_list(message.chat.id)
 
 # --- Добавление продукта ---
+# --- Добавление продукта ---
+
+# 👇 ВСТАВЬ ЭТО (обработка кнопки из нижнего меню)
+@dp.message(F.text == "➕ Добавить продукт")
+async def add_from_main_menu(message: types.Message, state: FSMContext):
+    await message.answer("📝 Напишите название продукта:", reply_markup=get_main_keyboard())
+    await state.set_state(AddProductFSM.name)
+
+@dp.callback_query(F.data == "add_from_list")  # ← эта строка уже есть в твоём коде
+async def cb_add_start(callback: types.CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await callback.message.answer("📝 Напишите название продукта:", reply_markup=get_main_keyboard())
+    await state.set_state(AddProductFSM.name)
 @dp.callback_query(F.data == "add_from_list")
 async def cb_add_start(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
