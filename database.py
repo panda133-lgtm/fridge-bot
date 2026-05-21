@@ -1,53 +1,66 @@
+import sqlite3
 import os
-import asyncpg
+import aiosqlite
 
-DATABASE_URL = os.getenv("DATABASE_URL")
+DATABASE_NAME = "./fridge.db"
+
 
 async def init_db():
-    if not DATABASE_URL:
-        print("⚠️ DATABASE_URL не найден!")
-        return
-    conn = await asyncpg.connect(DATABASE_URL)
-    await conn.execute('''
+    conn = await aiosqlite.connect(DATABASE_NAME)
+    cursor = await conn.cursor()
+    await cursor.execute('''
         CREATE TABLE IF NOT EXISTS products (
-            id SERIAL PRIMARY KEY,
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT UNIQUE NOT NULL,
-            quantity REAL NOT NULL DEFAULT 0,
-            unit TEXT NOT NULL DEFAULT 'шт.'
+            quantity REAL NOT NULL,
+            unit TEXT NOT NULL DEFAULT "штука"
         )
     ''')
+    await conn.commit()
     await conn.close()
+
 
 async def get_all_products():
-    if not DATABASE_URL:
-        return []
-    conn = await asyncpg.connect(DATABASE_URL)
-    rows = await conn.fetch('SELECT id, name, quantity, unit FROM products ORDER BY name')
+    conn = await aiosqlite.connect(DATABASE_NAME)
+    cursor = await conn.cursor()
+    await cursor.execute('SELECT name, quantity, unit FROM products ORDER BY quantity ASC')
+    products = await cursor.fetchall()
     await conn.close()
-    return [(row["id"], row["name"], row["quantity"], row["unit"]) for row in rows]
+    return products
 
-async def add_or_update_product(name: str, quantity: float, unit: str = "шт."):
-    if not DATABASE_URL:
-        return
-    conn = await asyncpg.connect(DATABASE_URL)
-    await conn.execute('''
-        INSERT INTO products (name, quantity, unit) VALUES ($1, $2, $3)
-        ON CONFLICT (name) DO UPDATE SET quantity = $2, unit = $3
-    ''', name, float(quantity), unit)
+
+async def add_or_update_product(name, quantity, unit="штука"):
+    conn = await aiosqlite.connect(DATABASE_NAME)
+    cursor = await conn.cursor()
+    await cursor.execute('''
+        INSERT INTO products (name, quantity, unit)
+        VALUES (?, ?, ?)
+        ON CONFLICT(name) DO UPDATE SET quantity = excluded.quantity, unit = excluded.unit
+    ''', (name, quantity, unit))
+    await conn.commit()
     await conn.close()
 
-async def change_quantity_by_id(product_id: int, delta: float):
-    if not DATABASE_URL:
-        return 0
-    conn = await asyncpg.connect(DATABASE_URL)
-    await conn.execute('UPDATE products SET quantity = quantity + $1 WHERE id = $2', delta, product_id)
-    result = await conn.fetchval('SELECT quantity FROM products WHERE id = $1', product_id)
-    await conn.close()
-    return result
 
-async def delete_product_by_id(product_id: int):
-    if not DATABASE_URL:
-        return
-    conn = await asyncpg.connect(DATABASE_URL)
-    await conn.execute('DELETE FROM products WHERE id = $1', product_id)
+async def change_quantity(name, amount):
+    conn = await aiosqlite.connect(DATABASE_NAME)
+    cursor = await conn.cursor()
+    await cursor.execute('SELECT quantity, unit FROM products WHERE name = ?', (name,))
+    result = await cursor.fetchone()
+
+    if result:
+        old_qty, unit = result
+        new_qty = max(0, old_qty + amount)
+        await cursor.execute('UPDATE products SET quantity = ? WHERE name = ?', (new_qty, name))
+        await conn.commit()
+        await conn.close()
+        return new_qty
+    await conn.close()
+    return 0
+
+
+async def delete_product(name):
+    conn = await aiosqlite.connect(DATABASE_NAME)
+    cursor = await conn.cursor()
+    await cursor.execute('DELETE FROM products WHERE name = ?', (name,))
+    await conn.commit()
     await conn.close()
