@@ -1,5 +1,6 @@
 """
 Умный Холодильник — бот для учёта продуктов
+Работает на Render с health-сервером
 """
 import asyncio
 import logging
@@ -10,6 +11,7 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
+from aiohttp import web
 from dotenv import load_dotenv
 
 import database
@@ -47,7 +49,7 @@ def get_main_keyboard():
 def get_list_keyboard(products):
     """
     Кнопки управления рядом с каждым продуктом + общие.
-    ВАЖНО: используем product_id (число) в callback_data, чтобы избежать ошибки BUTTON_DATA_INVALID
+    Используем product_id (число) в callback_data
     """
     buttons = []
     
@@ -66,6 +68,22 @@ def get_list_keyboard(products):
     buttons.append([InlineKeyboardButton(text="➕ Добавить продукт", callback_data="add_from_list")])
     
     return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+# ================= HEALTH SERVER ДЛЯ RENDER =================
+async def handle_health(request):
+    """Простой ответ для Render, чтобы бот не убивался"""
+    return web.Response(text="Bot is running! 🧊")
+
+async def start_health_server():
+    """Запускает HTTP сервер на порту 8080 для Render"""
+    app = web.Application()
+    app.router.add_get('/', handle_health)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', 8080)
+    await site.start()
+    logging.info("🏥 Health server запущен на порту 8080")
 
 
 # ================= ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =================
@@ -244,6 +262,11 @@ async def cb_show_low(callback: types.CallbackQuery):
 async def main():
     await database.init_db()
     print("✅ База данных инициализирована. Бот запущен...")
+    
+    # Запускаем health-сервер для Render
+    await start_health_server()
+    
+    # Запускаем polling
     await dp.start_polling(bot, drop_pending_updates=True)
 
 
