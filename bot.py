@@ -1,6 +1,6 @@
 """
 Умный Холодильник — бот для учёта продуктов
-Функции: список, добавление, управление, уведомления в 14:00/18:00, время обновления
+Безопасный планировщик уведомлений на чистом asyncio
 """
 import asyncio
 import logging
@@ -12,14 +12,13 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 from dotenv import load_dotenv
-from aiocron import crontab
 import database
 
 # ================= НАСТРОЙКИ =================
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
-    raise ValueError("❌ Переменная BOT_TOKEN не найдена!")
+    raise ValueError(" Переменная BOT_TOKEN не найдена!")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 bot = Bot(token=BOT_TOKEN)
@@ -34,7 +33,7 @@ class AddProductFSM(StatesGroup):
 # ================= КЛАВИАТУРЫ =================
 def get_main_keyboard():
     return ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text=" Список продуктов"), KeyboardButton(text="➕ Добавить продукт")]],
+        keyboard=[[KeyboardButton(text="📦 Список продуктов"), KeyboardButton(text="➕ Добавить продукт")]],
         resize_keyboard=True
     )
 
@@ -54,20 +53,20 @@ def get_list_keyboard(products):
 
 # ================= ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =================
 async def send_full_list(chat_id: int):
-    database.set_last_update_time()  # Фиксируем время обновления
+    database.set_last_update_time()
     products = await database.get_all_products()
     
     if not products:
         await bot.send_message(
             chat_id=chat_id,
-            text="❌ Список пуст. Нажмите ➕ чтобы добавить.",
+            text="❌ Список пуст. Нажмите  чтобы добавить.",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="➕ Добавить", callback_data="add_from_list")]])
         )
         return
     
-    text = " **Актуальный список:**\n\n"
+    text = "📋 **Актуальный список:**\n\n"
     for product_id, name, qty, unit in products[:50]:
-        icon = "️" if float(qty) <= 3 else "✅"
+        icon = "⚠️" if float(qty) <= 3 else "✅"
         text += f"{icon} `{name}`: {qty} {unit}\n"
     
     await bot.send_message(
@@ -80,7 +79,7 @@ async def send_full_list(chat_id: int):
 # ================= ОБРАБОТЧИКИ КОМАНД =================
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
-    await database.save_user_chat_id(message.chat.id)  # Запоминаем пользователя
+    await database.save_user_chat_id(message.chat.id)
     await message.answer(
         "Привет! Я Умный Холодильник 🧊\nУправляйте запасами через кнопки ниже:",
         reply_markup=get_main_keyboard()
@@ -95,20 +94,20 @@ async def cmd_list(message: types.Message):
 async def show_last_update(message: types.Message):
     last_time = database.get_last_update_time()
     if last_time:
-        await message.answer(f"🕐 Список последний раз обновлялся: **{last_time.strftime('%d.%m.%Y в %H:%M')}**", parse_mode="Markdown")
+        await message.answer(f" Список последний раз обновлялся: **{last_time.strftime('%d.%m.%Y в %H:%M')}**", parse_mode="Markdown")
     else:
         await message.answer("🕐 Список ещё не обновлялся в этой сессии.")
 
 # ================= ДОБАВЛЕНИЕ ПРОДУКТА =================
 @dp.message(F.text == "➕ Добавить продукт")
 async def add_from_main_menu(message: types.Message, state: FSMContext):
-    await message.answer("📝 Напишите название продукта:", reply_markup=get_main_keyboard())
+    await message.answer(" Напишите название продукта:", reply_markup=get_main_keyboard())
     await state.set_state(AddProductFSM.name)
 
 @dp.callback_query(F.data == "add_from_list")
 async def cb_add_start(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
-    await callback.message.answer(" Напишите название продукта:", reply_markup=get_main_keyboard())
+    await callback.message.answer("📝 Напишите название продукта:", reply_markup=get_main_keyboard())
     await state.set_state(AddProductFSM.name)
 
 @dp.message(AddProductFSM.name)
@@ -130,8 +129,8 @@ async def msg_add_qty(message: types.Message, state: FSMContext):
         return
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=" Штука", callback_data="unit:шт.")],
-        [InlineKeyboardButton(text=" Литр", callback_data="unit:л.")],
+        [InlineKeyboardButton(text="🍏 Штука", callback_data="unit:шт.")],
+        [InlineKeyboardButton(text="🥛 Литр", callback_data="unit:л.")],
         [InlineKeyboardButton(text="🧱 Пачка", callback_data="unit:уп.")],
         [InlineKeyboardButton(text="🍶 Бутылка", callback_data="unit:бут.")],
         [InlineKeyboardButton(text="🥗 Блюдо", callback_data="unit:блюд.")]
@@ -162,7 +161,7 @@ async def cb_list_actions(callback: types.CallbackQuery):
             await callback.answer("➖ -1")
         elif action == "inc":
             await database.change_quantity_by_id(product_id, 1)
-            await callback.answer(" +1")
+            await callback.answer("➕ +1")
         elif action == "del":
             await database.delete_product_by_id(product_id)
             await callback.answer("🗑 Удалён")
@@ -177,7 +176,7 @@ async def cb_noop(callback: types.CallbackQuery):
 
 @dp.callback_query(F.data == "refresh")
 async def cb_refresh(callback: types.CallbackQuery):
-    await callback.answer(" Список обновлён!")
+    await callback.answer("🔄 Список обновлён!")
     await send_full_list(callback.message.chat.id)
 
 @dp.callback_query(F.data == "show_low")
@@ -203,7 +202,7 @@ async def send_low_stock_notifications():
     text = "🚨 **Внимание! Заканчиваются продукты:**\n\n"
     for name, qty, unit in low_products:
         text += f"⚠️ `{name}`: осталось {qty} {unit}\n"
-    text += "\nПополните запасы! 🛒"
+    text += "\nПополните запасы! "
     
     chat_ids = await database.get_all_user_chat_ids()
     for chat_id in chat_ids:
@@ -211,26 +210,29 @@ async def send_low_stock_notifications():
             await bot.send_message(chat_id=chat_id, text=text, parse_mode="Markdown")
             await asyncio.sleep(0.5)
         except Exception as e:
-            print(f"❌ Ошибка отправки в {chat_id}: {e}")
+            print(f" Ошибка отправки в {chat_id}: {e}")
 
-async def start_scheduler():
-    # ⚠️ Если ты не в Москве, замени 'Europe/Moscow' на свой пояс (например 'Europe/Kiev')
-    @crontab('0 14 * * *', timezone='Europe/Moscow')
-    async def notify_14():
-        await send_low_stock_notifications()
-    
-    @crontab('0 18 * * *', timezone='Europe/Moscow')
-    async def notify_18():
-        await send_low_stock_notifications()
-    
-    print("⏰ Планировщик запущен: уведомления в 14:00 и 18:00 (МСК)")
+async def run_notification_scheduler():
+    """Безопасный планировщик на чистом asyncio (проверка каждые 30 сек)"""
+    print("⏰ Планировщик запущен. Ждём 14:00 и 18:00 (МСК)...")
+    while True:
+        # Render работает в UTC. 14:00 МСК = 11:00 UTC, 18:00 МСК = 15:00 UTC
+        now_utc = datetime.utcnow()
+        if now_utc.hour in (11, 15) and now_utc.minute == 0:
+            print(f"🔔 Время рассылки! {now_utc.strftime('%H:%M')} UTC")
+            await send_low_stock_notifications()
+            await asyncio.sleep(65)  # Пропускаем остаток минуты, чтобы не спамить
+        await asyncio.sleep(30)
 
 # ================= ЗАПУСК =================
 async def main():
     await database.init_db()
     print("✅ База данных инициализирована.")
-    await asyncio.sleep(2)  # Пауза для стабильности соединения
-    await start_scheduler()
+    await asyncio.sleep(2)
+    
+    # Запускаем планировщик в фоне
+    asyncio.create_task(run_notification_scheduler())
+    
     print(" Запуск polling...")
     await dp.start_polling(bot, drop_pending_updates=True)
 
@@ -239,3 +241,5 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         print("🛑 Бот остановлен вручную.")
+    except Exception as e:
+        print(f" Критическая ошибка запуска: {e}")
