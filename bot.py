@@ -1,6 +1,6 @@
 """
 Умный Холодильник — бот для учёта продуктов
-Безопасный планировщик уведомлений на чистом asyncio
+Версия с кнопкой времени и стабильным планировщиком
 """
 import asyncio
 import logging
@@ -18,7 +18,7 @@ import database
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
-    raise ValueError(" Переменная BOT_TOKEN не найдена!")
+    raise ValueError("❌ Переменная BOT_TOKEN не найдена!")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 bot = Bot(token=BOT_TOKEN)
@@ -32,8 +32,12 @@ class AddProductFSM(StatesGroup):
 
 # ================= КЛАВИАТУРЫ =================
 def get_main_keyboard():
+    """Главное меню с кнопкой времени"""
     return ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="📦 Список продуктов"), KeyboardButton(text="➕ Добавить продукт")]],
+        keyboard=[
+            [KeyboardButton(text="📦 Список продуктов"), KeyboardButton(text="➕ Добавить продукт")],
+            [KeyboardButton(text="🕐 Время обновления")]  # ← НОВАЯ КНОПКА
+        ],
         resize_keyboard=True
     )
 
@@ -53,13 +57,13 @@ def get_list_keyboard(products):
 
 # ================= ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =================
 async def send_full_list(chat_id: int):
-    database.set_last_update_time()
+    database.set_last_update_time()  # Фиксируем время
     products = await database.get_all_products()
     
     if not products:
         await bot.send_message(
             chat_id=chat_id,
-            text="❌ Список пуст. Нажмите  чтобы добавить.",
+            text="❌ Список пуст. Нажмите ➕ чтобы добавить.",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="➕ Добавить", callback_data="add_from_list")]])
         )
         return
@@ -76,12 +80,12 @@ async def send_full_list(chat_id: int):
         reply_markup=get_list_keyboard(products)
     )
 
-# ================= ОБРАБОТЧИКИ КОМАНД =================
+# ================= ОБРАБОТЧИКИ =================
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     await database.save_user_chat_id(message.chat.id)
     await message.answer(
-        "Привет! Я Умный Холодильник 🧊\nУправляйте запасами через кнопки ниже:",
+        "Привет! Я Умный Холодильник \nУправляйте запасами через кнопки ниже:",
         reply_markup=get_main_keyboard()
     )
 
@@ -90,18 +94,19 @@ async def cmd_start(message: types.Message):
 async def cmd_list(message: types.Message):
     await send_full_list(message.chat.id)
 
-@dp.message(Command("last_update"))
-async def show_last_update(message: types.Message):
+#  Обработчик новой кнопки
+@dp.message(F.text == "🕐 Время обновления")
+async def show_last_update_btn(message: types.Message):
     last_time = database.get_last_update_time()
     if last_time:
-        await message.answer(f" Список последний раз обновлялся: **{last_time.strftime('%d.%m.%Y в %H:%M')}**", parse_mode="Markdown")
+        await message.answer(f"🕐 Список последний раз обновлялся: **{last_time.strftime('%d.%m.%Y в %H:%M')}**", parse_mode="Markdown")
     else:
-        await message.answer("🕐 Список ещё не обновлялся в этой сессии.")
+        await message.answer(" Список ещё не запрашивался в этой сессии. Нажми 📦 Список продуктов.")
 
 # ================= ДОБАВЛЕНИЕ ПРОДУКТА =================
 @dp.message(F.text == "➕ Добавить продукт")
 async def add_from_main_menu(message: types.Message, state: FSMContext):
-    await message.answer(" Напишите название продукта:", reply_markup=get_main_keyboard())
+    await message.answer("📝 Напишите название продукта:", reply_markup=get_main_keyboard())
     await state.set_state(AddProductFSM.name)
 
 @dp.callback_query(F.data == "add_from_list")
@@ -191,55 +196,66 @@ async def cb_show_low(callback: types.CallbackQuery):
         text = "📉 **Осталось мало (≤3):**\n\n" + "\n".join(f"⚠️ `{n}`: {q} {u}" for _, n, q, u in low_products)
         await callback.message.answer(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 К полному списку", callback_data="refresh")]]))
 
-# ================= УВЕДОМЛЕНИЯ =================
+# ================= УВЕДОМЛЕНИЯ (СТАБИЛЬНАЯ ВЕРСИЯ) =================
 async def send_low_stock_notifications():
-    print(" Проверка низкого запаса...")
-    low_products = await database.get_low_stock_products(threshold=3.0)
-    if not low_products:
-        print("✅ Все продукты в норме")
-        return
-    
-    text = "🚨 **Внимание! Заканчиваются продукты:**\n\n"
-    for name, qty, unit in low_products:
-        text += f"⚠️ `{name}`: осталось {qty} {unit}\n"
-    text += "\nПополните запасы! "
-    
-    chat_ids = await database.get_all_user_chat_ids()
-    for chat_id in chat_ids:
-        try:
-            await bot.send_message(chat_id=chat_id, text=text, parse_mode="Markdown")
-            await asyncio.sleep(0.5)
-        except Exception as e:
-            print(f" Ошибка отправки в {chat_id}: {e}")
+    logging.info("🔔 Проверка низкого запаса...")
+    try:
+        low_products = await database.get_low_stock_products(threshold=3.0)
+        if not low_products:
+            logging.info("✅ Все продукты в норме, уведомления не нужны.")
+            return
+        
+        text = " **Внимание! Заканчиваются продукты:**\n\n"
+        for name, qty, unit in low_products:
+            text += f"⚠️ `{name}`: осталось {qty} {unit}\n"
+        text += "\nПополните запасы! 🛒"
+        
+        chat_ids = await database.get_all_user_chat_ids()
+        for chat_id in chat_ids:
+            try:
+                await bot.send_message(chat_id=chat_id, text=text, parse_mode="Markdown")
+                await asyncio.sleep(0.5)
+            except Exception as e:
+                logging.warning(f"Не удалось отправить в {chat_id}: {e}")
+        logging.info("🔔 Уведомления успешно разосланы.")
+    except Exception as e:
+        logging.error(f"❌ Ошибка в планировщике: {e}")
 
 async def run_notification_scheduler():
-    """Безопасный планировщик на чистом asyncio (проверка каждые 30 сек)"""
-    print("⏰ Планировщик запущен. Ждём 14:00 и 18:00 (МСК)...")
+    """Фоновый планировщик с защитой от крашей"""
+    logging.info("⏰ Планировщик запущен. Проверка каждые 60 сек...")
     while True:
-        # Render работает в UTC. 14:00 МСК = 11:00 UTC, 18:00 МСК = 15:00 UTC
-        now_utc = datetime.utcnow()
-        if now_utc.hour in (11, 15) and now_utc.minute == 0:
-            print(f"🔔 Время рассылки! {now_utc.strftime('%H:%M')} UTC")
-            await send_low_stock_notifications()
-            await asyncio.sleep(65)  # Пропускаем остаток минуты, чтобы не спамить
-        await asyncio.sleep(30)
+        try:
+            now_utc = datetime.utcnow()
+            # 14:00 МСК = 11:00 UTC | 18:00 МСК = 15:00 UTC
+            if now_utc.hour in (11, 15) and now_utc.minute == 0:
+                logging.info("🕐 Время рассылки!")
+                await send_low_stock_notifications()
+                await asyncio.sleep(65)  # Пропускаем минуту, чтобы не дублировать
+            await asyncio.sleep(30)
+        except Exception as e:
+            logging.error(f"⚠️ Планировщик споткнулся: {e}")
+            await asyncio.sleep(10)
 
 # ================= ЗАПУСК =================
 async def main():
-    await database.init_db()
-    print("✅ База данных инициализирована.")
-    await asyncio.sleep(2)
-    
-    # Запускаем планировщик в фоне
-    asyncio.create_task(run_notification_scheduler())
-    
-    print(" Запуск polling...")
-    await dp.start_polling(bot, drop_pending_updates=True)
+    try:
+        await database.init_db()
+        logging.info("✅ База данных инициализирована.")
+        
+        # Запускаем планировщик в фоне
+        asyncio.create_task(run_notification_scheduler())
+        
+        logging.info("🚀 Запуск polling... Бот готов к работе!")
+        await dp.start_polling(bot, drop_pending_updates=True)
+    except Exception as e:
+        logging.critical(f"💥 Критическая ошибка запуска: {e}")
+        raise
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("🛑 Бот остановлен вручную.")
+        logging.info("🛑 Бот остановлен вручную.")
     except Exception as e:
-        print(f" Критическая ошибка запуска: {e}")
+        logging.critical(f" Бот упал: {e}")
