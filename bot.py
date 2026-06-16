@@ -259,16 +259,24 @@ async def cb_show_low(callback: types.CallbackQuery):
 
 
 # ================= ЗАПУСК =================
+# ================= ЗАПУСК =================
 async def main():
     await database.init_db()
-    print("✅ База данных инициализирована. Бот запущен...")
+    print("✅ База данных инициализирована.")
     
-    # Запускаем health-сервер для Render
-    await start_health_server()
+    # 🔑 КРИТИЧНО ДЛЯ RENDER: даём Telegram 3 секунды отпустить старую сессию
+    print("⏳ Ждём освобождения сессии Telegram...")
+    await asyncio.sleep(3)
     
-    # Запускаем polling
-    await dp.start_polling(bot, drop_pending_updates=True)
-
+    print("🚀 Запуск polling...")
+    try:
+        await dp.start_polling(bot, drop_pending_updates=True)
+    except asyncio.CancelledError:
+        # Render шлёт SIGTERM → aiogram отменяет задачу → мы корректно закрываем сессию
+        print("⏹️ Получен сигнал остановки. Корректное завершение...")
+    finally:
+        await bot.session.close()
+        print("🔌 Сессия закрыта. Бот остановлен.")
 
 if __name__ == "__main__":
     try:
