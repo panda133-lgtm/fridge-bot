@@ -1,17 +1,18 @@
 """
 Умный Холодильник — бот для учёта продуктов
-Стабильная версия для Render Free + polling
+Стабильная версия для Render Web Service с health-сервером
 """
 import asyncio
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
+from aiohttp import web
 from dotenv import load_dotenv
 
 import database
@@ -21,6 +22,9 @@ load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("❌ Переменная BOT_TOKEN не найдена!")
+
+# Порт для health-сервера (Render сам задаёт переменную PORT)
+PORT = int(os.getenv("PORT", 10000))
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 bot = Bot(token=BOT_TOKEN)
@@ -34,7 +38,6 @@ class AddProductFSM(StatesGroup):
 
 # ================= КЛАВИАТУРЫ =================
 def get_main_keyboard():
-    """Главное меню с кнопкой времени"""
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="📦 Список продуктов"), KeyboardButton(text="➕ Добавить продукт")],
@@ -44,7 +47,6 @@ def get_main_keyboard():
     )
 
 def get_list_keyboard(products):
-    """Кнопки управления рядом с каждым продуктом + общие"""
     buttons = []
     for product_id, name, qty, unit in products:
         buttons.append([
@@ -60,7 +62,6 @@ def get_list_keyboard(products):
 
 # ================= ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =================
 async def send_full_list(chat_id: int):
-    """Формирует и отправляет актуальный список"""
     database.set_last_update_time()
     products = await database.get_all_products()
     
@@ -84,6 +85,21 @@ async def send_full_list(chat_id: int):
         reply_markup=get_list_keyboard(products)
     )
 
+# ================= HEALTH-СЕРВЕР ДЛЯ RENDER =================
+async def handle_health(request):
+    """Ответ для Render, чтобы он не убивал бота"""
+    return web.Response(text="Bot is running! 🧊")
+
+async def start_health_server():
+    """Запускает HTTP сервер на порту PORT"""
+    app = web.Application()
+    app.router.add_get('/', handle_health)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', PORT)
+    await site.start()
+    logging.info(f"🏥 Health server запущен на порту {PORT}")
+
 # ================= ОБРАБОТЧИКИ КОМАНД =================
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
@@ -102,7 +118,10 @@ async def cmd_list(message: types.Message):
 async def show_last_update_btn(message: types.Message):
     last_time = database.get_last_update_time()
     if last_time:
-        await message.answer(f"🕐 Список последний раз обновлялся: **{last_time.strftime('%d.%m.%Y в %H:%M')}**", parse_mode="Markdown")
+        await message.answer(
+            f"🕐 Список последний раз обновлялся: **{last_time.strftime('%d.%m.%Y в %H:%M')}**",
+            parse_mode="Markdown"
+        )
     else:
         await message.answer("🕐 Список ещё не запрашивался в этой сессии. Нажми 📦 Список продуктов.")
 
@@ -124,7 +143,6 @@ async def msg_add_name(message: types.Message, state: FSMContext):
         await message.answer("⚠️ Введите корректное название!", reply_markup=get_main_keyboard())
         return
     await state.update_data(name=message.text.strip())
-    logging.info(f"✅ Название сохранено: {message.text.strip()}")
     await message.answer("🔢 Введите количество (можно дробь, например 0.5 или 2):", reply_markup=get_main_keyboard())
     await state.set_state(AddProductFSM.quantity)
 
@@ -133,7 +151,6 @@ async def msg_add_qty(message: types.Message, state: FSMContext):
     try:
         qty = float(message.text.replace(',', '.'))
         await state.update_data(quantity=qty)
-        logging.info(f"✅ Количество сохранено: {qty}")
     except ValueError:
         await message.answer("❌ Пожалуйста, введите корректное число!", reply_markup=get_main_keyboard())
         return
@@ -154,9 +171,8 @@ async def cb_add_unit(callback: types.CallbackQuery, state: FSMContext):
     unit = callback.data.split(":")[1]
     data = await state.get_data()
     
-    # 🔒 ЗАЩИТА: проверяем, есть ли нужные данные
     if 'name' not in data or 'quantity' not in data:
-        await callback.message.answer("❌ Произошла ошибка. Начни добавление заново: нажми ➕ Добавить продукт")
+        await callback.message.answer("❌ Произошла ошибка. Начни добавление заново.")
         await state.clear()
         return
     
@@ -170,7 +186,7 @@ async def cb_add_unit(callback: types.CallbackQuery, state: FSMContext):
         await send_full_list(callback.message.chat.id)
     except Exception as e:
         logging.error(f"Ошибка сохранения: {e}")
-        await callback.message.answer("❌ Не удалось сохранить продукт. Попробуй ещё раз.")
+        await callback.message.answer("❌ Не удалось сохранить. Попробуй ещё раз.")
         await state.clear()
 
 # ================= КНОПКИ СПИСКА =================
@@ -214,9 +230,13 @@ async def cb_show_low(callback: types.CallbackQuery):
         await callback.message.answer("✅ Все продукты в норме! (>3)")
     else:
         text = "📉 **Осталось мало (≤3):**\n\n" + "\n".join(f"⚠️ `{n}`: {q} {u}" for _, n, q, u in low_products)
-        await callback.message.answer(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 К полному списку", callback_data="refresh")]]))
+        await callback.message.answer(
+            text,
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 К полному списку", callback_data="refresh")]])
+        )
 
-# ================= УВЕДОМЛЕНИЯ (СТАБИЛЬНАЯ ВЕРСИЯ) =================
+# ================= УВЕДОМЛЕНИЯ =================
 async def send_low_stock_notifications():
     logging.info("🔔 Проверка низкого запаса...")
     try:
@@ -237,17 +257,19 @@ async def send_low_stock_notifications():
                 await asyncio.sleep(0.5)
             except Exception as e:
                 logging.warning(f"Не удалось отправить в {chat_id}: {e}")
-        logging.info("🔔 Уведомления успешно разосланы.")
+        logging.info("🔔 Уведомления разосланы.")
     except Exception as e:
         logging.error(f"❌ Ошибка в планировщике: {e}")
 
 async def run_notification_scheduler():
-    """Фоновый планировщик с защитой от крашей"""
+    """Фоновый планировщик: 14:00 и 18:00 по МСК"""
     logging.info("⏰ Планировщик запущен. Проверка каждые 60 сек...")
+    
+    # Правильное получение времени в UTC (без DeprecationWarning)
     while True:
         try:
-            now_utc = datetime.utcnow()
-            # 14:00 МСК = 11:00 UTC | 18:00 МСК = 15:00 UTC
+            now_utc = datetime.now(timezone.utc)
+            # 14:00 МСК (UTC+3) = 11:00 UTC | 18:00 МСК = 15:00 UTC
             if now_utc.hour in (11, 15) and now_utc.minute == 0:
                 logging.info("🕐 Время рассылки!")
                 await send_low_stock_notifications()
@@ -263,17 +285,22 @@ async def main():
         await database.init_db()
         logging.info("✅ База данных инициализирована.")
         
-        # 🔑 КРИТИЧНО: даём Telegram 3 секунды отпустить старую сессию
+        # Запускаем health-сервер (Render требует открытый порт!)
+        await start_health_server()
+        
+        # Пауза для освобождения старой сессии Telegram
         logging.info("⏳ Ждём освобождения сессии Telegram...")
         await asyncio.sleep(3)
         
-        # Запускаем планировщик в фоне
+        # Запускаем планировщик уведомлений
         asyncio.create_task(run_notification_scheduler())
         
         logging.info("🚀 Запуск polling... Бот готов к работе!")
         await dp.start_polling(bot, drop_pending_updates=True)
     except asyncio.CancelledError:
-        logging.info("⏹️ Получен сигнал остановки. Корректное завершение...")
+        logging.info("⏹️ Получен сигнал остановки.")
+    except Exception as e:
+        logging.critical(f"💥 Критическая ошибка: {e}")
     finally:
         await bot.session.close()
         logging.info("🔌 Сессия закрыта.")
@@ -285,4 +312,3 @@ if __name__ == "__main__":
         logging.info("🛑 Бот остановлен вручную.")
     except Exception as e:
         logging.critical(f"💥 Бот упал: {e}")
-        raise
