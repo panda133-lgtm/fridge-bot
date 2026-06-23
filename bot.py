@@ -1,5 +1,6 @@
 """
 Умный Холодильник — бот для учёта продуктов
+Время обновления только при изменениях
 """
 import asyncio
 import logging
@@ -60,7 +61,7 @@ def get_list_keyboard(products):
 
 # ================= ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =================
 async def send_full_list(chat_id: int):
-    database.set_last_update_time()
+    """Показывает список БЕЗ обновления времени (только просмотр)"""
     products = await database.get_all_products()
     
     if not products:
@@ -115,11 +116,11 @@ async def show_last_update_btn(message: types.Message):
     last_time = database.get_last_update_time()
     if last_time:
         await message.answer(
-            f"🕐 Список последний раз обновлялся: **{last_time.strftime('%d.%m.%Y в %H:%M')}**",
+            f"🕐 Последний раз список менялся: **{last_time.strftime('%d.%m.%Y в %H:%M')}**",
             parse_mode="Markdown"
         )
     else:
-        await message.answer("🕐 Список ещё не запрашивался. Нажми 📦 Список продуктов.")
+        await message.answer("🕐 В этой сессии список ещё не менялся.")
 
 # ================= ДОБАВЛЕНИЕ ПРОДУКТА =================
 @dp.message(F.text == "➕ Добавить продукт")
@@ -173,13 +174,19 @@ async def cb_add_unit(callback: types.CallbackQuery, state: FSMContext):
         return
     
     try:
-        await database.add_or_update_product(data['name'], data['quantity'], unit)
-        await callback.message.answer(
-            f"✅ Готово! `{data['name']}`: {data['quantity']} {unit}",
-            parse_mode="Markdown"
-        )
-        await state.clear()
-        await send_full_list(callback.message.chat.id)
+        success = await database.add_or_update_product(data['name'], data['quantity'], unit)
+        if success:
+            # ✅ ВРЕМЯ ОБНОВЛЯЕТСЯ ТОЛЬКО ПРИ ДОБАВЛЕНИИ!
+            database.set_last_update_time()
+            await callback.message.answer(
+                f"✅ Готово! `{data['name']}`: {data['quantity']} {unit}",
+                parse_mode="Markdown"
+            )
+            await state.clear()
+            await send_full_list(callback.message.chat.id)
+        else:
+            await callback.message.answer("❌ Не удалось сохранить. Попробуй ещё раз.")
+            await state.clear()
     except Exception as e:
         logging.error(f"Ошибка сохранения: {e}")
         await callback.message.answer("❌ Не удалось сохранить.")
@@ -193,15 +200,25 @@ async def cb_list_actions(callback: types.CallbackQuery):
     product_id = int(product_id_str)
     
     try:
+        success = False
         if action == "dec":
-            await database.change_quantity_by_id(product_id, -1)
+            result = await database.change_quantity_by_id(product_id, -1)
+            if result > 0:
+                success = True
             await callback.answer("➖ -1")
         elif action == "inc":
-            await database.change_quantity_by_id(product_id, 1)
+            result = await database.change_quantity_by_id(product_id, 1)
+            if result > 0:
+                success = True
             await callback.answer("➕ +1")
         elif action == "del":
-            await database.delete_product_by_id(product_id)
+            success = await database.delete_product_by_id(product_id)
             await callback.answer("🗑 Удалён")
+        
+        # ✅ ВРЕМЯ ОБНОВЛЯЕТСЯ ТОЛЬКО ПРИ ИЗМЕНЕНИИ!
+        if success:
+            database.set_last_update_time()
+        
         await send_full_list(callback.message.chat.id)
     except Exception as e:
         logging.error(f"Ошибка: {e}")
@@ -247,12 +264,15 @@ async def send_low_stock_notifications():
         text += "\nПополните запасы! 🛒"
         
         chat_ids = await database.get_all_user_chat_ids()
+        sent = 0
         for chat_id in chat_ids:
             try:
                 await bot.send_message(chat_id=chat_id, text=text, parse_mode="Markdown")
+                sent += 1
                 await asyncio.sleep(0.5)
             except Exception as e:
                 logging.warning(f"Не удалось отправить в {chat_id}: {e}")
+        logging.info(f"🔔 Уведомлений отправлено: {sent}")
     except Exception as e:
         logging.error(f"❌ Ошибка планировщика: {e}")
 
